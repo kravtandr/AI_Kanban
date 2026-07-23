@@ -1,4 +1,5 @@
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Project, Task, TaskStatus, utcnow
@@ -13,7 +14,13 @@ def get_inbox(db: Session) -> Project:
     if inbox is None:
         inbox = Project(name="Inbox", color="#64748b", is_inbox=True)
         db.add(inbox)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:  # lost a create race (projects.name is unique)
+            db.rollback()
+            inbox = db.scalar(select(Project).where(Project.is_inbox.is_(True)))
+            if inbox is None:  # unique clash on the name without an inbox flag
+                raise ProjectError("Inbox project is missing") from None
     return inbox
 
 

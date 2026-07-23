@@ -102,7 +102,17 @@ class TaskDraft(BaseModel):
     )
     project: str | None = Field(
         default=None,
-        description="Exact name of one of the existing projects, or null when unsure",
+        description=(
+            "Exact name of an existing project, or a short new project name when none "
+            "fits, or null for one-off tasks"
+        ),
+    )
+    project_description: str | None = Field(
+        default=None,
+        description=(
+            "One short sentence describing the project's scope; required when proposing "
+            "a new project, also given when the chosen project lacks a description"
+        ),
     )
     priority: TaskPriority = TaskPriority.medium
     tags: list[str] = Field(default_factory=list, description="0-4 short lowercase tags")

@@ -6,11 +6,13 @@ through the same service layer as the REST API. Tool logic lives in plain
 functions (`*_impl`) so it can be tested without the MCP transport.
 """
 
+from datetime import UTC, datetime
 from datetime import date as date_type
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from app.config import get_settings
 from app.db import get_session_factory
 from app.models import TaskPriority, TaskSource, TaskStatus
 from app.services import ai as ai_svc
@@ -99,8 +101,13 @@ def create_task_impl(
 ) -> dict:
     with get_session_factory()() as db:
         ai_meta = None
+        draft = None
+        # Whether the agent named a project explicitly; the LLM suggestion is
+        # only used (and may auto-create a project) when it did not.
+        agent_project = project
         if auto_format or project is None:
-            result = ai_svc.draft_task(db, f"{title}\n{description}".strip())
+            source_text = f"{title}\n{description}".strip()
+            result = ai_svc.draft_task(db, source_text)
             if result.ok:
                 draft = result.draft
                 title = draft.title
@@ -109,9 +116,17 @@ def create_task_impl(
                 priority = draft.priority.value
                 tags = tags or draft.tags
                 due_date = due_date or (draft.due_date.isoformat() if draft.due_date else None)
-                ai_meta = {"source_text": title, "auto_format": True}
+                ai_meta = {
+                    "source_text": source_text,
+                    "auto_format": True,
+                    "model": ai_svc.active_model(get_settings()),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
         project_id = None
-        if project:
+        if draft is not None and agent_project is None and project:
+            # LLM-picked project: auto-create it / backfill its description
+            project_id = ai_svc.resolve_project_id(db, project, draft.project_description)
+        elif project:
             found = project_svc.find_project_by_name(db, project)
             project_id = found.id if found else None
         task = task_svc.create_task(
@@ -248,7 +263,12 @@ def complete_task(task_id: int) -> dict:
     return complete_task_impl(task_id)
 
 
-@mcp.tool(description="Delete a task (soft delete, recoverable for 30 days).")
+@mcp.tool(
+    description=(
+        "Delete a task. Soft delete: the task disappears from the board and is "
+        "permanently removed after 30 days; there is no restore API."
+    )
+)
 def delete_task(task_id: int) -> dict:
     return delete_task_impl(task_id)
 

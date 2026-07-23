@@ -46,6 +46,7 @@ export interface TaskDraft {
   title: string;
   description: string;
   project: string | null;
+  project_description: string | null;
   priority: Priority;
   tags: string[];
   due_date: string | null;
