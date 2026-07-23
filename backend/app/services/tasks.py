@@ -1,8 +1,10 @@
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import Project, Task, TaskPriority, TaskSource, TaskStatus, utcnow
 from app.services.projects import get_inbox
 
@@ -12,6 +14,7 @@ class TaskError(Exception):
 
 
 DONE_WINDOW_DAYS = 14
+PURGE_DELETED_AFTER_DAYS = 30
 
 
 def list_tasks(
@@ -25,12 +28,13 @@ def list_tasks(
     all_done: bool = False,
     limit: int = 500,
 ) -> list[Task]:
+    # No SQL LIMIT here: the tag/done-window filters below run in Python, so
+    # limiting early would drop matching rows. Single-user scale, acceptable.
     q = (
         select(Task)
         .join(Project)
         .where(Task.deleted_at.is_(None), Project.archived_at.is_(None))
         .order_by(Task.sort_order, Task.created_at.desc())
-        .limit(limit)
     )
     if project_ids:
         q = q.where(Task.project_id.in_(project_ids))
@@ -53,7 +57,7 @@ def list_tasks(
             for t in tasks
             if t.status != TaskStatus.done or (t.completed_at and t.completed_at >= cutoff)
         ]
-    return tasks
+    return tasks[:limit]
 
 
 def get_task(db: Session, task_id: int) -> Task:
@@ -115,7 +119,10 @@ def update_task(db: Session, task_id: int, **fields) -> Task:
         task.project_id = fields["project_id"]
     for name in ("title", "description", "priority", "tags", "due_date"):
         if name in fields and fields[name] is not None:
-            setattr(task, name, fields[name])
+            value = fields[name]
+            if name == "title":  # same normalisation as create_task; DB column is String(200)
+                value = value.strip()[:200] or task.title
+            setattr(task, name, value)
     if fields.get("clear_due_date"):
         task.due_date = None
     if fields.get("status") is not None:
@@ -150,10 +157,33 @@ def delete_task(db: Session, task_id: int) -> None:
     db.commit()
 
 
+def purge_deleted_tasks(db: Session) -> int:
+    """Hard-delete tasks soft-deleted more than PURGE_DELETED_AFTER_DAYS ago (NFR-4)."""
+    cutoff = utcnow() - timedelta(days=PURGE_DELETED_AFTER_DAYS)
+    stale = list(
+        db.scalars(select(Task).where(Task.deleted_at.is_not(None), Task.deleted_at < cutoff))
+    )
+    for task in stale:
+        db.delete(task)
+    db.commit()
+    return len(stale)
+
+
+def _local_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(get_settings().timezone)
+    except Exception:  # invalid IANA name: fall back rather than break summaries
+        return ZoneInfo("UTC")
+
+
 def daily_summary(db: Session, day: date | None = None) -> dict:
-    day = day or date.today()
-    day_start = datetime(day.year, day.month, day.day)
-    day_end = day_start + timedelta(days=1)
+    # "Today" is interpreted in the configured timezone; completed_at is stored
+    # as naive UTC, so convert the local-day boundaries to naive UTC to compare.
+    tz = _local_timezone()
+    day = day or datetime.now(tz).date()
+    local_start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    day_start = local_start.astimezone(UTC).replace(tzinfo=None)
+    day_end = (local_start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None)
     base = (
         select(Task).join(Project).where(Task.deleted_at.is_(None), Project.archived_at.is_(None))
     )

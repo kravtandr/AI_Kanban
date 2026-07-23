@@ -4,6 +4,8 @@
 # To switch to HTTPS with Caddy's internal CA, replace `:80` with your
 # LAN hostname (e.g. `tracker.lan`) and add `tls internal` inside the block;
 # then trust Caddy's root CA on your devices.
+# When enabling `tls internal`, also set COOKIE_SECURE=true in .env so the
+# session cookie is marked Secure (and HSTS is emitted).
 
 :80 {
 	encode gzip

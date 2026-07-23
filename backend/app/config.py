@@ -9,6 +9,13 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./tasktracker.db"
     app_env: str = "dev"
 
+    # Mark the session cookie Secure. Decoupled from app_env: the LAN deployment
+    # serves plain HTTP (ADR-0004), so this must be opt-in when TLS is enabled.
+    cookie_secure: bool = False
+
+    # IANA timezone used to compute "today" boundaries (daily summary). Env: TIMEZONE.
+    timezone: str = "UTC"
+
     session_ttl_days: int = 30
     login_rate_limit_attempts: int = 5
     login_rate_limit_window_seconds: int = 300

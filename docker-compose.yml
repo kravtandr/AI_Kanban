@@ -20,6 +20,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://tasktracker:${POSTGRES_PASSWORD}@postgres:5432/tasktracker
       APP_ENV: ${APP_ENV:-prod}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TIMEZONE: ${TIMEZONE:-UTC}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
@@ -58,7 +60,7 @@ services:
     command:
       - |
         while true; do
-          pg_dump -h postgres -U tasktracker tasktracker | gzip > "/backups/tasktracker-$$(date +%F).sql.gz" \
+          pg_dump -h postgres -U tasktracker tasktracker | gzip > "/backups/tasktracker-$$(date +%F-%H%M%S).sql.gz" \
             && echo "backup done: $$(date)" \
             || echo "backup FAILED: $$(date)"
           find /backups -name 'tasktracker-*.sql.gz' -mtime +14 -delete

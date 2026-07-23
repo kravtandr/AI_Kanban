@@ -2,7 +2,7 @@ import time
 from collections import defaultdict
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -22,12 +22,21 @@ class RateLimited(AuthError):
 _attempts: dict[str, list[float]] = defaultdict(list)
 
 
+def _prune_attempts(now: float, window: float) -> None:
+    """Drop expired attempts for every IP so the dict cannot grow unboundedly."""
+    for key in list(_attempts):
+        alive = [t for t in _attempts[key] if now - t < window]
+        if alive:
+            _attempts[key] = alive
+        else:
+            del _attempts[key]
+
+
 def check_rate_limit(ip: str) -> None:
     settings = get_settings()
     now = time.monotonic()
-    window = settings.login_rate_limit_window_seconds
-    _attempts[ip] = [t for t in _attempts[ip] if now - t < window]
-    if len(_attempts[ip]) >= settings.login_rate_limit_attempts:
+    _prune_attempts(now, settings.login_rate_limit_window_seconds)
+    if len(_attempts.get(ip, [])) >= settings.login_rate_limit_attempts:
         raise RateLimited("Too many login attempts, try again later")
 
 
@@ -45,6 +54,12 @@ def login(db: Session, username: str, password: str, ip: str) -> tuple[User, str
     if user is None or not verify_password(password, user.password_hash):
         record_attempt(ip)
         raise AuthError("Invalid username or password")
+    # Housekeeping (NFR-4): drop this user's expired sessions on each login.
+    db.execute(
+        delete(SessionToken).where(
+            SessionToken.user_id == user.id, SessionToken.expires_at < utcnow()
+        )
+    )
     token = generate_token()
     session = SessionToken(
         user_id=user.id,

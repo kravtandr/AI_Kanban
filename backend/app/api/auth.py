@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
@@ -8,6 +10,8 @@ from app.models import User
 from app.schemas import LoginIn, UserOut
 from app.services import auth as auth_service
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
@@ -17,10 +21,12 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
     try:
         user, token = auth_service.login(db, body.username, body.password, ip)
     except auth_service.RateLimited as exc:
+        log.warning("Rate-limited login attempt for username=%r from ip=%s", body.username, ip)
         raise HTTPException(
             status_code=429, detail={"code": "rate_limited", "message": str(exc)}
         ) from exc
     except auth_service.AuthError as exc:
+        log.warning("Failed login attempt for username=%r from ip=%s", body.username, ip)
         raise HTTPException(
             status_code=401, detail={"code": "bad_credentials", "message": str(exc)}
         ) from exc
@@ -31,7 +37,7 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
         max_age=settings.session_ttl_days * 86400,
         httponly=True,
         samesite="lax",
-        secure=settings.app_env == "prod",
+        secure=settings.cookie_secure,
         path="/",
     )
     return user
