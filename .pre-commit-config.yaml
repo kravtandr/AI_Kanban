@@ -1,0 +1,18 @@
+# Pre-commit hooks: fast local feedback (lint + fast tests), bypassable by design.
+# CI re-runs the same canonical commands in a clean environment (see AGENTS.md).
+# Activate after a fresh checkout:  cd backend && uv sync && uv run pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: backend-lint
+        name: backend lint (ruff check + format + mypy)
+        entry: bash -c 'cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy app'
+        language: system
+        pass_filenames: false
+        files: ^backend/
+      - id: backend-fast-tests
+        name: backend fast tests (pytest -m "not slow")
+        entry: bash -c 'cd backend && uv run pytest -q -m "not slow"'
+        language: system
+        pass_filenames: false
+        files: ^backend/

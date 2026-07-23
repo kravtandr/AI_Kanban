@@ -1,0 +1,11 @@
+# TaskTracker — LAN-only reverse proxy (ADR-0004: no external exposure).
+#
+# Default: plain HTTP on port 80 inside the trusted home network.
+# To switch to HTTPS with Caddy's internal CA, replace `:80` with your
+# LAN hostname (e.g. `tracker.lan`) and add `tls internal` inside the block;
+# then trust Caddy's root CA on your devices.
+
+:80 {
+	encode gzip
+	reverse_proxy app:8000
+}
