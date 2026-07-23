@@ -44,6 +44,13 @@ body {
   scrollbar-color: var(--color-edge) transparent;
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 @layer components {
   .btn-primary {
     @apply rounded-lg bg-amber px-4 py-2 text-sm font-medium text-night transition hover:brightness-110 disabled:opacity-40;
@@ -59,6 +66,12 @@ body {
   }
   .eyebrow {
     @apply mb-1 block font-mono text-[10px] tracking-[0.14em] text-dim uppercase;
+  }
+  .btn-icon {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-dim transition hover:bg-edge/40 hover:text-ink;
+  }
+  .tab {
+    @apply shrink-0 rounded-lg px-3 py-1.5 font-mono text-xs whitespace-nowrap transition;
   }
 }
 
@@ -90,9 +103,22 @@ body {
   }
 }
 
+/* Идёт диктовка: микрофон дышит янтарём */
+.mic-live {
+  color: var(--color-amber);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .caret::after,
-  .draft-ready {
+  .draft-ready,
+  .mic-live {
     animation: none;
   }
   * {

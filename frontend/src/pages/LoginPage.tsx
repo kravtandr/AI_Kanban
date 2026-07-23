@@ -16,7 +16,10 @@ export default function LoginPage() {
     setError(null);
     try {
       await api.login(username, password);
-      navigate(params.get("next") ?? "/board", { replace: true });
+      // Только внутренние пути: "//host" и абсолютные URL — открытый редирект
+      const next = params.get("next");
+      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : "/board";
+      navigate(safeNext, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось войти");
     } finally {
@@ -39,6 +42,7 @@ export default function LoginPage() {
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            autoFocus
             autoComplete="username"
             required
             className="input py-2.5"

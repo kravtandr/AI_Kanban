@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
+import { getSpeechRecognition, type SpeechRecognitionLike } from "../lib/speech";
 import type { Project } from "../types";
 import { PRIORITIES } from "../types";
 import Modal from "./Modal";
@@ -20,20 +21,107 @@ interface DraftItem {
   form?: TaskFormValues;
 }
 
-/** Командная строка задач: Enter отправляет текст модели и сразу освобождает
- * ввод; черновики копятся в лотке и одобряются по одному или пачкой. */
+const STORAGE_KEY = "tasktracker.quickadd.drafts";
+
+function fallbackForm(text: string, projectId: number): TaskFormValues {
+  return {
+    title: text,
+    description: "",
+    project_id: projectId,
+    status: "todo",
+    priority: "medium",
+    tags: "",
+    due_date: "",
+  };
+}
+
+/** Черновики переживают перезагрузку и 401-редирект через sessionStorage.
+ * Элементы, чей запрос был в полёте (pending/creating), восстанавливаются
+ * как ready-черновики на доработку — результат запроса неизвестен. */
+function restoreItems(): DraftItem[] {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as DraftItem[])
+      .filter((it) => typeof it?.id === "number" && typeof it?.text === "string")
+      .map((it) =>
+        it.status === "ready" && it.form
+          ? it
+          : {
+              id: it.id,
+              text: it.text,
+              status: "ready" as const,
+              aiOk: false,
+              aiError: "прервано перезагрузкой — проверьте черновик",
+              form: it.form ?? fallbackForm(it.text, 0),
+            },
+      );
+  } catch {
+    return [];
+  }
+}
+
+/** Командная строка задач — главный вход в трекер. На десктопе живёт в
+ * шапке, на мобильном прибита к низу экрана (зона большого пальца).
+ * Enter отправляет текст модели и сразу освобождает ввод; черновики
+ * копятся в лотке и одобряются по одному или пачкой. Микрофон диктует
+ * в то же поле (Web Speech API, ru-RU) — есть только в браузерах с API. */
 export default function QuickAdd({ projects }: Props) {
   const [text, setText] = useState("");
-  const [items, setItems] = useState<DraftItem[]>([]);
+  const [items, setItems] = useState<DraftItem[]>(restoreItems);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const nextId = useRef(1);
+  const [listening, setListening] = useState(false);
+  const [interim, setInterim] = useState("");
+  const [micError, setMicError] = useState<string | null>(null);
+  const nextId = useRef(items.reduce((max, it) => Math.max(max, it.id), 0) + 1);
   const inputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  // Индекс последнего применённого финального сегмента диктовки
+  const finalIndexRef = useRef(0);
   const queryClient = useQueryClient();
+
+  // Ленивая инициализация: window трогаем только на клиенте внутри компонента
+  const speechCtor = useMemo(() => getSpeechRecognition(), []);
+
+  // Актуальная очередь для асинхронных циклов (createAll):
+  // state-снапшот в замыкании устаревает, ref — нет.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  // Персистим очередь: DraftItem — плоские данные, сериализуются как есть
+  useEffect(() => {
+    try {
+      if (items.length === 0) sessionStorage.removeItem(STORAGE_KEY);
+      else sessionStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    } catch {
+      // приватный режим / квота — черновики просто не переживут перезагрузку
+    }
+  }, [items]);
+
+  // Непустая очередь — предупреждаем перед закрытием вкладки
+  useEffect(() => {
+    if (items.length === 0) return;
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [items.length]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement;
-      if (event.key === "n" && !["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
+      if (
+        event.key === "n" &&
+        !event.metaKey && // не воровать браузерные Cmd+N / Ctrl+N
+        !event.ctrlKey &&
+        !event.altKey &&
+        !target.isContentEditable &&
+        !["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
+      ) {
         event.preventDefault();
         inputRef.current?.focus();
       }
@@ -42,13 +130,93 @@ export default function QuickAdd({ projects }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  useEffect(() => () => recognitionRef.current?.stop(), []);
+
+  // Подсказка о запрете микрофона не должна висеть вечно
+  useEffect(() => {
+    if (!micError) return;
+    const timer = setTimeout(() => setMicError(null), 6000);
+    return () => clearTimeout(timer);
+  }, [micError]);
+
   const inboxId = projects.find((p) => p.is_inbox)?.id ?? projects[0]?.id ?? 0;
+  const projectsReady = projects.length > 0;
+
+  // Черновики, восстановленные до загрузки проектов, получили project_id: 0 —
+  // как только справочник готов, подставляем инбокс
+  useEffect(() => {
+    if (!inboxId) return;
+    setItems((prev) =>
+      prev.map((it) =>
+        it.form && it.form.project_id === 0
+          ? { ...it, form: { ...it.form, project_id: inboxId } }
+          : it,
+      ),
+    );
+  }, [inboxId]);
 
   const patchItem = (id: number, patch: Partial<DraftItem>) =>
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
 
+  function toggleDictation() {
+    if (!speechCtor) return;
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    setMicError(null);
+    setInterim("");
+    finalIndexRef.current = 0;
+    const recognition = new speechCtor();
+    recognition.lang = "ru-RU";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      // Применяем только финальные сегменты — функциональным setText,
+      // чтобы ручные правки во время диктовки не затирались снапшотом
+      let interimText = "";
+      for (let i = finalIndexRef.current; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalIndexRef.current = i + 1;
+          const segment = result[0]?.transcript.trim();
+          if (segment) {
+            setText((prev) => (prev ? `${prev.trimEnd()} ${segment}` : segment));
+          }
+        } else {
+          interimText += result[0]?.transcript ?? "";
+        }
+      }
+      setInterim(interimText);
+    };
+    recognition.onend = () => {
+      setListening(false);
+      setInterim("");
+    };
+    recognition.onerror = (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        setMicError("Нет доступа к микрофону — разрешите в настройках браузера");
+      }
+      setListening(false);
+      setInterim("");
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setListening(true);
+    } catch {
+      // start() бросает, если распознавание уже идёт или API сломан —
+      // не оставляем «залипший» индикатор записи
+      setListening(false);
+      recognitionRef.current = null;
+      return;
+    }
+    inputRef.current?.focus();
+  }
+
   async function submitText(event: React.FormEvent) {
     event.preventDefault();
+    if (!projectsReady) return; // без проектов улетел бы project_id: 0
     const value = text.trim();
     if (!value) return;
     setText(""); // поле свободно — печатайте следующую, пока модель думает
@@ -56,6 +224,25 @@ export default function QuickAdd({ projects }: Props) {
     setItems((prev) => [...prev, { id, text: value, status: "pending" }]);
     try {
       const resp = await api.draft(value);
+      // ИИ мог создать новый проект под этот черновик — до invalidate
+      // вставляем минимальную запись, чтобы селект и чип проекта не были
+      // транзиентно пустыми, пока идёт refetch справочника
+      const cached = queryClient.getQueryData<Project[]>(["projects"]);
+      if (cached && !cached.some((p) => p.id === resp.project_id)) {
+        queryClient.setQueryData<Project[]>(["projects"], [
+          ...cached,
+          {
+            id: resp.project_id,
+            name: resp.draft.project ?? "…",
+            color: "#6b7280",
+            description: resp.draft.project_description ?? "",
+            is_inbox: false,
+            archived_at: null,
+            active_tasks: 0,
+          },
+        ]);
+      }
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
       patchItem(id, {
         status: "ready",
         aiOk: resp.ai_ok,
@@ -75,15 +262,7 @@ export default function QuickAdd({ projects }: Props) {
         status: "ready",
         aiOk: false,
         aiError: err instanceof Error ? err.message : "сеть недоступна",
-        form: {
-          title: value,
-          description: "",
-          project_id: inboxId,
-          status: "todo",
-          priority: "medium",
-          tags: "",
-          due_date: "",
-        },
+        form: fallbackForm(value, inboxId),
       });
     }
   }
@@ -112,37 +291,93 @@ export default function QuickAdd({ projects }: Props) {
   }
 
   async function createAll() {
-    for (const item of items.filter((it) => it.status === "ready")) {
-      await createItem(item);
+    // Фиксируем только id: сам элемент перечитываем из актуальной очереди
+    // перед созданием — пользователь мог удалить или отредактировать его,
+    // пока цикл шёл по предыдущим
+    const ids = itemsRef.current.filter((it) => it.status === "ready").map((it) => it.id);
+    for (const id of ids) {
+      const current = itemsRef.current.find((it) => it.id === id);
+      if (!current || current.status !== "ready") continue;
+      await createItem(current);
     }
   }
 
   const readyCount = items.filter((it) => it.status === "ready").length;
   const editingItem = items.find((it) => it.id === editingId);
-  const projectName = (id: number) => projects.find((p) => p.id === id)?.name ?? "";
+  const projectName = (id: number) => projects.find((p) => p.id === id)?.name ?? "…";
 
   return (
     <>
-      <form onSubmit={submitText} className="relative flex gap-2">
-        <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 font-mono text-sm text-amber">
-          ›
-        </span>
-        <input
-          ref={inputRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="опиши задачу — ai оформит  (n)"
-          className="input py-2.5 pl-8 font-mono text-[13px] md:w-96"
-        />
-        <button type="submit" disabled={!text.trim()} className="btn-primary shrink-0">
-          Добавить
+      {/* Мобильная позиция fixed требует, чтобы ни у одного предка не было
+        backdrop-filter/transform — иначе он станет containing block. */}
+      <form
+        onSubmit={submitText}
+        className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-2 border-t border-edge/70 bg-surface p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:w-full md:max-w-xl md:border-0 md:bg-transparent md:p-0"
+      >
+        <div className="relative flex-1">
+          <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 font-mono text-sm text-amber">
+            ›
+          </span>
+          {(micError || (listening && interim)) && (
+            <span
+              className={`pointer-events-none absolute bottom-full left-0 z-10 mb-2 max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] shadow-xl ${
+                micError ? "text-danger" : "text-dim italic"
+              }`}
+            >
+              {micError ?? `…${interim}`}
+            </span>
+          )}
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              // Симметрично хоткею n: Esc возвращает фокус доске
+              if (e.key === "Escape") e.currentTarget.blur();
+            }}
+            placeholder="опиши задачу — ai оформит"
+            className="input h-11 pl-8 font-mono text-[13px] md:h-10"
+          />
+        </div>
+        {speechCtor && (
+          <button
+            type="button"
+            onClick={toggleDictation}
+            aria-label={listening ? "Остановить диктовку" : "Надиктовать задачу"}
+            title={listening ? "Остановить диктовку" : "Надиктовать задачу"}
+            className={`btn-icon h-11 w-11 md:h-10 md:w-10 ${listening ? "mic-live" : ""}`}
+          >
+            <svg
+              width="17"
+              height="17"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <rect x="9" y="2" width="6" height="12" rx="3" />
+              <path d="M5 10a7 7 0 0 0 14 0" />
+              <line x1="12" y1="19" x2="12" y2="22" />
+            </svg>
+          </button>
+        )}
+        <button
+          type="submit"
+          disabled={!text.trim() || !projectsReady}
+          aria-label="Добавить задачу"
+          title={!projectsReady ? "Проекты ещё не загружены" : undefined}
+          className="btn-primary h-11 shrink-0 px-4 md:h-10"
+        >
+          <span className="font-mono md:hidden">↑</span>
+          <span className="hidden md:inline">Добавить</span>
         </button>
       </form>
 
       {items.length > 0 &&
         createPortal(
-          <div className="fixed inset-x-2 bottom-2 z-40 md:inset-x-auto md:right-4 md:bottom-4 md:w-[26rem]">
-            <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-edge bg-surface p-3 shadow-2xl">
+          <div className="fixed inset-x-2 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 md:inset-x-auto md:right-4 md:bottom-4 md:w-[26rem]">
+            <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-edge bg-surface p-3 shadow-2xl md:max-h-[60vh]">
               <div className="mb-2 flex items-center justify-between">
                 <span className="font-mono text-[11px] tracking-[0.16em] text-dim uppercase">
                   черновики · {items.length}
@@ -176,7 +411,8 @@ export default function QuickAdd({ projects }: Props) {
                             <button
                               onClick={() => setEditingId(item.id)}
                               title="Редактировать"
-                              className="rounded-md px-1.5 py-0.5 text-xs text-dim transition hover:bg-edge/50 hover:text-ink"
+                              aria-label="Редактировать черновик"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg text-sm text-dim transition hover:bg-edge/50 hover:text-ink"
                             >
                               ✎
                             </button>
@@ -184,7 +420,8 @@ export default function QuickAdd({ projects }: Props) {
                               onClick={() => createItem(item)}
                               disabled={item.status === "creating"}
                               title="Создать задачу"
-                              className="rounded-md bg-amber px-1.5 py-0.5 text-xs font-semibold text-night transition hover:brightness-110 disabled:opacity-40"
+                              aria-label="Создать задачу"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber text-sm font-semibold text-night transition hover:brightness-110 disabled:opacity-40"
                             >
                               ✓
                             </button>
@@ -193,7 +430,8 @@ export default function QuickAdd({ projects }: Props) {
                                 setItems((prev) => prev.filter((it) => it.id !== item.id))
                               }
                               title="Отбросить черновик"
-                              className="rounded-md px-1.5 py-0.5 text-xs text-dim transition hover:bg-danger/15 hover:text-danger"
+                              aria-label="Отбросить черновик"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg text-sm text-dim transition hover:bg-danger/15 hover:text-danger"
                             >
                               ✕
                             </button>
@@ -222,7 +460,14 @@ export default function QuickAdd({ projects }: Props) {
         )}
 
       {editingItem?.form && (
-        <Modal onClose={() => setEditingId(null)}>
+        <Modal
+          onClose={() => setEditingId(null)}
+          onSubmit={() => {
+            if (!editingItem.form?.title.trim()) return;
+            setEditingId(null);
+            void createItem(editingItem);
+          }}
+        >
           <h3 className="mb-4 text-lg font-semibold">Черновик задачи</h3>
           <TaskForm
             values={editingItem.form}

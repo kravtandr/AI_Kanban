@@ -7,7 +7,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      "/api": "http://localhost:8000",
+      // VITE_PROXY_TARGET lets a dockerised dev server reach the backend
+      // (e.g. http://host.docker.internal:80 through Caddy).
+      "/api": process.env.VITE_PROXY_TARGET ?? "http://localhost:8000",
     },
   },
   test: {

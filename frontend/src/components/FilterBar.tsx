@@ -7,13 +7,21 @@ export interface Filters {
   q: string;
 }
 
+export function activeFilterCount(filters: Filters): number {
+  return filters.projects.length + (filters.priority ? 1 : 0) + (filters.q ? 1 : 0);
+}
+
 interface Props {
   projects: Project[];
   filters: Filters;
   onChange: (filters: Filters) => void;
+  onLogout: () => void;
 }
 
-export default function FilterBar({ projects, filters, onChange }: Props) {
+/** Содержимое сворачиваемой панели фильтров. Чипы проектов нейтральные:
+ * цвет проекта остаётся только крошечной точкой-идентификатором,
+ * активность отмечает янтарь — единственный акцент интерфейса. */
+export default function FilterBar({ projects, filters, onChange, onLogout }: Props) {
   const toggleProject = (id: number) => {
     const next = filters.projects.includes(id)
       ? filters.projects.filter((p) => p !== id)
@@ -22,17 +30,17 @@ export default function FilterBar({ projects, filters, onChange }: Props) {
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-2.5 md:flex-row md:flex-wrap md:items-center">
       <input
         value={filters.q}
         onChange={(e) => onChange({ ...filters, q: e.target.value })}
         placeholder="поиск…"
-        className="input w-full py-1.5 font-mono text-xs md:w-48"
+        className="input py-1.5 font-mono text-xs md:w-48"
       />
       <select
         value={filters.priority}
         onChange={(e) => onChange({ ...filters, priority: e.target.value as Priority | "" })}
-        className="input w-auto py-1.5 text-xs"
+        className="input w-full py-1.5 text-xs md:w-auto"
       >
         <option value="">Любой приоритет</option>
         {PRIORITIES.map((p) => (
@@ -48,25 +56,30 @@ export default function FilterBar({ projects, filters, onChange }: Props) {
             <button
               key={project.id}
               onClick={() => toggleProject(project.id)}
-              className={`rounded-full border px-2.5 py-1 font-mono text-[11px] transition ${
-                active ? "" : "border-edge text-dim hover:border-dim/60 hover:text-ink"
-              }`}
-              style={
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition ${
                 active
-                  ? {
-                      borderColor: project.color,
-                      color: project.color,
-                      backgroundColor: `${project.color}1f`,
-                    }
-                  : undefined
-              }
+                  ? "border-amber/60 bg-amber/10 text-ink"
+                  : "border-edge text-dim hover:border-dim/60 hover:text-ink"
+              }`}
             >
-              <span style={{ color: project.color }}>●</span> {project.name}
-              {project.active_tasks > 0 && ` · ${project.active_tasks}`}
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: project.color }}
+              />
+              {project.name}
+              {project.active_tasks > 0 && (
+                <span className="text-dim/70">{project.active_tasks}</span>
+              )}
             </button>
           );
         })}
       </div>
+      <button
+        onClick={onLogout}
+        className="self-start py-1 font-mono text-xs text-dim transition hover:text-ink md:hidden"
+      >
+        выйти
+      </button>
     </div>
   );
 }
