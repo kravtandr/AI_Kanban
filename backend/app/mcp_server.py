@@ -9,6 +9,7 @@ functions (`*_impl`) so it can be tested without the MCP transport.
 from datetime import date as date_type
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from app.db import get_session_factory
 from app.models import TaskPriority, TaskSource, TaskStatus
@@ -24,6 +25,10 @@ mcp = FastMCP(
         "progress, and daily_summary for a day overview."
     ),
     stateless_http=True,
+    # DNS-rebinding protection rejects LAN hostnames (421 behind the reverse
+    # proxy). The endpoint is protected by our own Bearer-token check instead
+    # (ADR-0003/0004), so host-header validation is disabled.
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 

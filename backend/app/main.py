@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -17,6 +18,22 @@ from app.security import tokens_equal
 from app.services.auth import verify_api_token
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+class SpaStaticFiles(StaticFiles):
+    """Serve the SPA build; unknown paths fall back to index.html so that
+    client-side routes (/login, /board) survive a full page load."""
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+        if response.status_code == 404:
+            response = await super().get_response("index.html", scope)
+        return response
 
 
 class McpPathNormalizer:
@@ -93,7 +110,7 @@ def create_app() -> FastAPI:
 
     # Frontend SPA build (present in the Docker image; absent in pure-API dev runs).
     if STATIC_DIR.is_dir():
-        app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+        app.mount("/", SpaStaticFiles(directory=STATIC_DIR, html=True), name="static")
 
     return app
 
