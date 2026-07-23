@@ -1,15 +1,20 @@
 """LLM pipeline: turn raw text into a structured task draft (FR-5.x).
 
-Uses the Anthropic SDK with structured outputs. All failures degrade gracefully:
-the caller always gets a usable draft (raw text as title, Inbox as project).
+Two providers (ADR-0005): "anthropic" — Claude API with structured outputs;
+"openai" — any OpenAI-compatible /v1/chat/completions endpoint (self-hosted
+models), JSON extracted from the reply and validated with the same schema.
+All failures degrade gracefully: the caller always gets a usable draft
+(raw text as title, Inbox as project).
 """
 
+import json
 import logging
+import re
 from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.models import LlmUsage, Task
 from app.schemas import TaskDraft
 from app.services.projects import find_project_by_name, get_inbox, list_projects
@@ -43,8 +48,36 @@ def _fallback_draft(text: str) -> TaskDraft:
     return TaskDraft(title=text.strip()[:200] or "Untitled task")
 
 
-def _call_model(system: str, user_message: str) -> tuple[TaskDraft, int, int]:
-    """Isolated for tests. Returns (draft, input_tokens, output_tokens)."""
+def llm_configured(settings: Settings) -> bool:
+    if settings.llm_provider == "openai":
+        return bool(settings.openai_base_url and settings.openai_model)
+    return bool(settings.anthropic_api_key)
+
+
+def active_model(settings: Settings) -> str:
+    return settings.openai_model if settings.llm_provider == "openai" else settings.anthropic_model
+
+
+JSON_FORMAT_INSTRUCTIONS = """
+Return ONLY a single JSON object, no markdown fences and no prose, with exactly
+these fields:
+{"title": string, "description": string, "project": string or null,
+ "priority": "low"|"medium"|"high"|"urgent", "tags": [string, ...],
+ "due_date": "YYYY-MM-DD" or null}"""
+
+
+def _extract_json(text: str) -> str:
+    """Pull the JSON object out of a chat reply: drop <think> blocks and code
+    fences, then take the outermost {...} span."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"```(?:json)?", "", text)
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        raise ValueError("no JSON object in LLM reply")
+    return text[start : end + 1]
+
+
+def _call_anthropic(system: str, user_message: str) -> tuple[TaskDraft, int, int]:
     import anthropic
 
     settings = get_settings()
@@ -67,13 +100,56 @@ def _call_model(system: str, user_message: str) -> tuple[TaskDraft, int, int]:
     return draft, usage.input_tokens, usage.output_tokens
 
 
+def _openai_chat(system: str, user_message: str) -> tuple[str, int, int]:
+    """One chat-completions round trip. Isolated for tests.
+    Returns (assistant content, prompt_tokens, completion_tokens)."""
+    import httpx
+
+    settings = get_settings()
+    headers = {"Content-Type": "application/json"}
+    if settings.openai_api_key:
+        headers["Authorization"] = f"Bearer {settings.openai_api_key}"
+    base_url = (settings.openai_base_url or "").rstrip("/")
+    response = httpx.post(
+        f"{base_url}/chat/completions",
+        headers=headers,
+        json={
+            "model": settings.openai_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_message},
+            ],
+            "max_tokens": 4096,
+        },
+        timeout=settings.llm_timeout_seconds,
+    )
+    response.raise_for_status()
+    data = response.json()
+    content = data["choices"][0]["message"]["content"] or ""
+    usage = data.get("usage") or {}
+    return content, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+
+
+def _call_openai(system: str, user_message: str) -> tuple[TaskDraft, int, int]:
+    content, tin, tout = _openai_chat(system + "\n" + JSON_FORMAT_INSTRUCTIONS, user_message)
+    payload = json.loads(_extract_json(content))
+    return TaskDraft.model_validate(payload), tin, tout
+
+
+def _call_model(system: str, user_message: str) -> tuple[TaskDraft, int, int]:
+    """Provider dispatch. Isolated for tests."""
+    if get_settings().llm_provider == "openai":
+        return _call_openai(system, user_message)
+    return _call_anthropic(system, user_message)
+
+
 def _log_usage(
     db: Session, operation: str, ok: bool, input_tokens: int = 0, output_tokens: int = 0
 ) -> None:
     db.add(
         LlmUsage(
             operation=operation,
-            model=get_settings().anthropic_model,
+            model=active_model(get_settings()),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             ok=ok,
@@ -96,7 +172,7 @@ def _project_context(db: Session) -> str:
 
 def draft_task(db: Session, text: str) -> DraftResult:
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not llm_configured(settings):
         return DraftResult(_fallback_draft(text), ok=False, error="LLM is not configured")
     user_message = (
         f"Today is {date.today().isoformat()}.\n\n{_project_context(db)}\n\nRaw note:\n{text}"
@@ -113,7 +189,7 @@ def draft_task(db: Session, text: str) -> DraftResult:
 
 def enhance_task(db: Session, task: Task) -> DraftResult:
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not llm_configured(settings):
         return DraftResult(_fallback_draft(task.title), ok=False, error="LLM is not configured")
     user_message = (
         f"Today is {date.today().isoformat()}.\n\n{_project_context(db)}\n\n"

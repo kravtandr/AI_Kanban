@@ -5,8 +5,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-# Make sure a developer's real key never leaks into tests.
+# Make sure a developer's real keys/endpoints never leak into tests.
 os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["LLM_PROVIDER"] = "anthropic"
+os.environ["OPENAI_BASE_URL"] = ""
+os.environ["OPENAI_API_KEY"] = ""
+os.environ["OPENAI_MODEL"] = ""
 os.environ["MCP_TOKEN"] = ""
 os.environ["ADMIN_USERNAME"] = ""
 os.environ["ADMIN_PASSWORD"] = ""

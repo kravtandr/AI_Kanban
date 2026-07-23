@@ -17,9 +17,17 @@ class Settings(BaseSettings):
     admin_username: str | None = None
     admin_password: str | None = None
 
+    # LLM provider: "anthropic" (Claude API) or "openai" (any OpenAI-compatible
+    # /v1/chat/completions endpoint, e.g. a self-hosted model). ADR-0005.
+    llm_provider: str = "anthropic"
+    llm_timeout_seconds: float = 15.0
+
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-4-8"
-    llm_timeout_seconds: float = 15.0
+
+    openai_base_url: str | None = None  # e.g. https://host:9443/v1
+    openai_api_key: str | None = None
+    openai_model: str = ""
 
     # Optional static MCP token (bootstrap). DB tokens (kind=mcp) also work.
     mcp_token: str | None = None
