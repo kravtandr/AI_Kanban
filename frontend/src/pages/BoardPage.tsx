@@ -1,9 +1,11 @@
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -11,7 +13,9 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import Column from "../components/Column";
 import FilterBar, { type Filters } from "../components/FilterBar";
+import NewTaskModal from "../components/NewTaskModal";
 import QuickAdd from "../components/QuickAdd";
+import { TaskCardView } from "../components/TaskCard";
 import TaskModal from "../components/TaskModal";
 import type { Priority, Status, Task } from "../types";
 import { STATUSES } from "../types";
@@ -28,6 +32,8 @@ export default function BoardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
   const [openTask, setOpenTask] = useState<Task | null>(null);
+  const [createStatus, setCreateStatus] = useState<Status | null>(null);
+  const [activeTask, setActiveTask] = useState<Task | null>(null);
   const queryClient = useQueryClient();
 
   const sensors = useSensors(
@@ -71,7 +77,12 @@ export default function BoardPage() {
     setSearchParams(params, { replace: true });
   }
 
+  function onDragStart(event: DragStartEvent) {
+    setActiveTask((event.active.data.current?.task as Task | undefined) ?? null);
+  }
+
   function onDragEnd(event: DragEndEvent) {
+    setActiveTask(null);
     const task = event.active.data.current?.task as Task | undefined;
     const overId = event.over?.id;
     if (!task || typeof overId !== "string" || !overId.startsWith("column-")) return;
@@ -110,7 +121,7 @@ export default function BoardPage() {
         {tasksQuery.isError ? (
           <p className="p-4 text-sm text-red-600">Не удалось загрузить задачи</p>
         ) : (
-          <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+          <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
             <div className="flex h-full snap-x snap-mandatory gap-3 overflow-x-auto md:snap-none">
               {STATUSES.map((column) => (
                 <Column
@@ -120,15 +131,32 @@ export default function BoardPage() {
                   tasks={tasks.filter((t) => t.status === column.id)}
                   projects={projectMap}
                   onOpen={setOpenTask}
+                  onAdd={setCreateStatus}
                 />
               ))}
             </div>
+            <DragOverlay dropAnimation={null}>
+              {activeTask && (
+                <TaskCardView
+                  task={activeTask}
+                  project={projectMap.get(activeTask.project_id)}
+                  overlay
+                />
+              )}
+            </DragOverlay>
           </DndContext>
         )}
       </main>
 
       {openTask && (
         <TaskModal task={openTask} projects={projects} onClose={() => setOpenTask(null)} />
+      )}
+      {createStatus && (
+        <NewTaskModal
+          status={createStatus}
+          projects={projects}
+          onClose={() => setCreateStatus(null)}
+        />
       )}
     </div>
   );

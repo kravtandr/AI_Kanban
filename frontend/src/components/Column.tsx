@@ -8,9 +8,10 @@ interface Props {
   tasks: Task[];
   projects: Map<number, Project>;
   onOpen: (task: Task) => void;
+  onAdd: (status: Status) => void;
 }
 
-export default function Column({ id, title, tasks, projects, onOpen }: Props) {
+export default function Column({ id, title, tasks, projects, onOpen, onAdd }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: `column-${id}` });
 
   return (
@@ -22,9 +23,19 @@ export default function Column({ id, title, tasks, projects, onOpen }: Props) {
     >
       <header className="flex items-center justify-between px-2 py-1.5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
-        <span className="rounded-full bg-slate-300/70 px-2 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-          {tasks.length}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="rounded-full bg-slate-300/70 px-2 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+            {tasks.length}
+          </span>
+          <button
+            onClick={() => onAdd(id)}
+            aria-label={`Добавить задачу в ${title}`}
+            title={`Добавить задачу в ${title}`}
+            className="flex h-6 w-6 items-center justify-center rounded-full text-base leading-none text-slate-500 hover:bg-slate-300/70 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          >
+            +
+          </button>
+        </div>
       </header>
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-1">
         {tasks.map((task) => (

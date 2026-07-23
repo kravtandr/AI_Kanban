@@ -2,32 +2,21 @@ import { useDraggable } from "@dnd-kit/core";
 import { formatDue, isOverdue } from "../lib/dates";
 import { PRIORITIES, type Project, type Task } from "../types";
 
-interface Props {
+interface ViewProps {
   task: Task;
   project: Project | undefined;
-  onOpen: (task: Task) => void;
+  overlay?: boolean;
 }
 
-export default function TaskCard({ task, project, onOpen }: Props) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: `task-${task.id}`,
-    data: { task },
-  });
-
+/** Pure card markup — reused by the board card and the DragOverlay copy. */
+export function TaskCardView({ task, project, overlay = false }: ViewProps) {
   const priority = PRIORITIES.find((p) => p.id === task.priority)!;
   const overdue = isOverdue(task.due_date, task.status);
 
   return (
     <div
-      ref={setNodeRef}
-      {...listeners}
-      {...attributes}
-      onClick={() => onOpen(task)}
-      style={
-        transform ? { transform: `translate(${transform.x}px, ${transform.y}px)` } : undefined
-      }
-      className={`cursor-pointer touch-manipulation rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition-shadow hover:shadow-md dark:border-slate-700 dark:bg-slate-900 ${
-        isDragging ? "z-50 opacity-80 shadow-lg" : ""
+      className={`rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900 ${
+        overlay ? "rotate-2 shadow-xl ring-2 ring-sky-400/60" : "transition-shadow hover:shadow-md"
       }`}
     >
       <div className="mb-1.5 flex items-start justify-between gap-2">
@@ -68,6 +57,33 @@ export default function TaskCard({ task, project, onOpen }: Props) {
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+interface Props {
+  task: Task;
+  project: Project | undefined;
+  onOpen: (task: Task) => void;
+}
+
+export default function TaskCard({ task, project, onOpen }: Props) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `task-${task.id}`,
+    data: { task },
+  });
+
+  // While dragging, the original stays in place dimmed; the moving copy is
+  // rendered by DragOverlay at the top layer (never clipped by columns).
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      onClick={() => onOpen(task)}
+      className={`cursor-grab touch-manipulation select-none ${isDragging ? "opacity-30" : ""}`}
+    >
+      <TaskCardView task={task} project={project} />
     </div>
   );
 }

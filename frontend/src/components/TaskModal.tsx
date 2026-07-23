@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api";
 import type { Project, Task } from "../types";
+import Modal from "./Modal";
 import TaskForm, { parseTags, type TaskFormValues } from "./TaskForm";
 
 interface Props {
@@ -73,15 +74,8 @@ export default function TaskModal({ task, projects, onClose }: Props) {
   });
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 md:items-center md:p-4"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 md:max-w-lg md:rounded-2xl dark:bg-slate-900"
-      >
-        <div className="mb-4 flex items-center justify-between">
+    <Modal onClose={onClose}>
+      <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold">Задача #{task.id}</h3>
           <button
             onClick={() => enhanceMutation.mutate()}
@@ -118,7 +112,6 @@ export default function TaskModal({ task, projects, onClose }: Props) {
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
