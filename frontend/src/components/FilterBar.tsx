@@ -26,13 +26,13 @@ export default function FilterBar({ projects, filters, onChange }: Props) {
       <input
         value={filters.q}
         onChange={(e) => onChange({ ...filters, q: e.target.value })}
-        placeholder="Поиск…"
-        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm md:w-52 dark:border-slate-700 dark:bg-slate-900"
+        placeholder="поиск…"
+        className="input w-full py-1.5 font-mono text-xs md:w-48"
       />
       <select
         value={filters.priority}
         onChange={(e) => onChange({ ...filters, priority: e.target.value as Priority | "" })}
-        className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
+        className="input w-auto py-1.5 text-xs"
       >
         <option value="">Любой приоритет</option>
         {PRIORITIES.map((p) => (
@@ -48,14 +48,20 @@ export default function FilterBar({ projects, filters, onChange }: Props) {
             <button
               key={project.id}
               onClick={() => toggleProject(project.id)}
-              className={`rounded-full border px-2.5 py-1 text-xs font-medium transition ${
-                active
-                  ? "border-transparent text-white"
-                  : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+              className={`rounded-full border px-2.5 py-1 font-mono text-[11px] transition ${
+                active ? "" : "border-edge text-dim hover:border-dim/60 hover:text-ink"
               }`}
-              style={active ? { backgroundColor: project.color } : undefined}
+              style={
+                active
+                  ? {
+                      borderColor: project.color,
+                      color: project.color,
+                      backgroundColor: `${project.color}1f`,
+                    }
+                  : undefined
+              }
             >
-              {project.name}
+              <span style={{ color: project.color }}>●</span> {project.name}
               {project.active_tasks > 0 && ` · ${project.active_tasks}`}
             </button>
           );

@@ -20,9 +20,8 @@ interface DraftItem {
   form?: TaskFormValues;
 }
 
-/** AI quick-add with a draft queue: Enter fires the LLM request and frees the
- * input immediately; drafts pile up in a tray and are approved one by one or
- * all at once (batch). */
+/** Командная строка задач: Enter отправляет текст модели и сразу освобождает
+ * ввод; черновики копятся в лотке и одобряются по одному или пачкой. */
 export default function QuickAdd({ projects }: Props) {
   const [text, setText] = useState("");
   const [items, setItems] = useState<DraftItem[]>([]);
@@ -52,7 +51,7 @@ export default function QuickAdd({ projects }: Props) {
     event.preventDefault();
     const value = text.trim();
     if (!value) return;
-    setText(""); // free the input right away — keep typing while the LLM thinks
+    setText(""); // поле свободно — печатайте следующую, пока модель думает
     const id = nextId.current++;
     setItems((prev) => [...prev, { id, text: value, status: "pending" }]);
     try {
@@ -124,34 +123,32 @@ export default function QuickAdd({ projects }: Props) {
 
   return (
     <>
-      <form onSubmit={submitText} className="flex gap-2">
+      <form onSubmit={submitText} className="relative flex gap-2">
+        <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 font-mono text-sm text-amber">
+          ›
+        </span>
         <input
           ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Новая задача… (n)"
-          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm shadow-sm md:w-96 dark:border-slate-700 dark:bg-slate-900"
+          placeholder="опиши задачу — ai оформит  (n)"
+          className="input py-2.5 pl-8 font-mono text-[13px] md:w-96"
         />
-        <button
-          type="submit"
-          disabled={!text.trim()}
-          className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
-        >
-          ✨ Добавить
+        <button type="submit" disabled={!text.trim()} className="btn-primary shrink-0">
+          Добавить
         </button>
       </form>
 
       {items.length > 0 &&
         createPortal(
           <div className="fixed inset-x-2 bottom-2 z-40 md:inset-x-auto md:right-4 md:bottom-4 md:w-[26rem]">
-            <div className="max-h-[60vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+            <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-edge bg-surface p-3 shadow-2xl">
               <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-semibold">Черновики · {items.length}</span>
+                <span className="font-mono text-[11px] tracking-[0.16em] text-dim uppercase">
+                  черновики · {items.length}
+                </span>
                 {readyCount > 0 && (
-                  <button
-                    onClick={createAll}
-                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900"
-                  >
+                  <button onClick={createAll} className="btn-primary px-3 py-1.5 text-xs">
                     Создать все ({readyCount})
                   </button>
                 )}
@@ -160,24 +157,26 @@ export default function QuickAdd({ projects }: Props) {
                 {items.map((item) => (
                   <div
                     key={item.id}
-                    className="rounded-xl border border-slate-200 p-2.5 dark:border-slate-700"
+                    className={`rounded-lg border border-edge bg-card p-2.5 ${
+                      item.status === "ready" ? "draft-ready" : ""
+                    }`}
                   >
                     {item.status === "pending" ? (
-                      <div className="flex items-center gap-2 text-sm text-slate-500">
-                        <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
-                        <span className="truncate">✨ Думаю: {item.text}</span>
+                      <div className="flex items-center gap-2 font-mono text-xs text-dim">
+                        <span className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-ai border-t-transparent" />
+                        <span className="truncate">думаю: {item.text}</span>
                       </div>
                     ) : (
                       <>
                         <div className="mb-1 flex items-start justify-between gap-2">
-                          <span className="text-sm font-medium leading-snug">
+                          <span className="text-sm leading-snug font-medium">
                             {item.form?.title}
                           </span>
                           <div className="flex shrink-0 gap-1">
                             <button
                               onClick={() => setEditingId(item.id)}
                               title="Редактировать"
-                              className="rounded-md px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              className="rounded-md px-1.5 py-0.5 text-xs text-dim transition hover:bg-edge/50 hover:text-ink"
                             >
                               ✎
                             </button>
@@ -185,7 +184,7 @@ export default function QuickAdd({ projects }: Props) {
                               onClick={() => createItem(item)}
                               disabled={item.status === "creating"}
                               title="Создать задачу"
-                              className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                              className="rounded-md bg-amber px-1.5 py-0.5 text-xs font-semibold text-night transition hover:brightness-110 disabled:opacity-40"
                             >
                               ✓
                             </button>
@@ -194,30 +193,21 @@ export default function QuickAdd({ projects }: Props) {
                                 setItems((prev) => prev.filter((it) => it.id !== item.id))
                               }
                               title="Отбросить черновик"
-                              className="rounded-md px-1.5 py-0.5 text-xs text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                              className="rounded-md px-1.5 py-0.5 text-xs text-dim transition hover:bg-danger/15 hover:text-danger"
                             >
                               ✕
                             </button>
                           </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                            {projectName(item.form?.project_id ?? 0)}
+                        <div className="flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-dim">
+                          <span>{projectName(item.form?.project_id ?? 0)}</span>
+                          <span>
+                            {PRIORITIES.find((p) => p.id === item.form?.priority)?.title.toLowerCase()}
                           </span>
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                            {PRIORITIES.find((p) => p.id === item.form?.priority)?.title}
-                          </span>
-                          {item.form?.due_date && (
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                              до {item.form.due_date}
-                            </span>
-                          )}
+                          {item.form?.due_date && <span>до {item.form.due_date}</span>}
                           {!item.aiOk && (
-                            <span
-                              title={item.aiError ?? undefined}
-                              className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700"
-                            >
-                              ⚠️ без AI
+                            <span className="text-amber" title={item.aiError ?? undefined}>
+                              ⚠ без ai
                             </span>
                           )}
                         </div>
@@ -241,10 +231,7 @@ export default function QuickAdd({ projects }: Props) {
             showStatus
           />
           <div className="mt-5 flex justify-end gap-2">
-            <button
-              onClick={() => setEditingId(null)}
-              className="rounded-lg px-4 py-2 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
+            <button onClick={() => setEditingId(null)} className="btn-ghost">
               Закрыть
             </button>
             <button
@@ -253,7 +240,7 @@ export default function QuickAdd({ projects }: Props) {
                 void createItem(editingItem);
               }}
               disabled={!editingItem.form.title.trim()}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+              className="btn-primary"
             >
               Создать
             </button>

@@ -8,6 +8,12 @@ interface ViewProps {
   overlay?: boolean;
 }
 
+const SOURCE_RAIL: Record<Task["source"], string> = {
+  manual: "transparent", // человеческое — тихое
+  ai: "var(--color-ai)",
+  mcp: "var(--color-mcp)",
+};
+
 /** Pure card markup — reused by the board card and the DragOverlay copy. */
 export function TaskCardView({ task, project, overlay = false }: ViewProps) {
   const priority = PRIORITIES.find((p) => p.id === task.priority)!;
@@ -15,48 +21,50 @@ export function TaskCardView({ task, project, overlay = false }: ViewProps) {
 
   return (
     <div
-      className={`rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900 ${
-        overlay ? "rotate-2 shadow-xl ring-2 ring-sky-400/60" : "transition-shadow hover:shadow-md"
+      className={`rounded-lg border border-edge bg-card p-3 ${
+        overlay
+          ? "rotate-1 shadow-2xl ring-2 ring-amber/50"
+          : "transition hover:-translate-y-px hover:border-dim/50"
       }`}
+      style={{ borderLeftWidth: 3, borderLeftColor: SOURCE_RAIL[task.source] }}
     >
-      <div className="mb-1.5 flex items-start justify-between gap-2">
-        <span className="text-sm font-medium leading-snug">{task.title}</span>
-        {(task.source === "ai" || task.source === "mcp") && (
-          <span
-            title={task.source === "ai" ? "Создано с помощью AI" : "Создано агентом через MCP"}
-            className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700"
-          >
-            {task.source === "ai" ? "AI" : "MCP"}
+      <p className="mb-1.5 text-sm leading-snug font-medium">{task.title}</p>
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-dim">
+        {priority.mark && (
+          <span className={priority.cls} title={`Приоритет: ${priority.title}`}>
+            {priority.mark}
           </span>
         )}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         {project && (
-          <span
-            className="rounded-full px-2 py-0.5 font-medium text-white"
-            style={{ backgroundColor: project.color }}
-          >
-            {project.name}
+          <span>
+            <span style={{ color: project.color }}>●</span> {project.name}
           </span>
         )}
-        <span className={`rounded-full px-2 py-0.5 font-medium ${priority.badge}`}>
-          {priority.title}
-        </span>
         {task.due_date && (
           <span
-            className={`rounded-full px-2 py-0.5 ${
-              overdue ? "bg-red-600 font-semibold text-white" : "bg-slate-100 text-slate-600"
-            }`}
+            className={overdue ? "font-medium text-danger" : ""}
+            title={overdue ? "Просрочено" : "Срок"}
           >
+            {overdue ? "⚠ " : ""}
             {formatDue(task.due_date)}
           </span>
         )}
         {task.tags.map((tag) => (
-          <span key={tag} className="text-slate-400">
+          <span key={tag} className="text-dim/70">
             #{tag}
           </span>
         ))}
-      </div>
+        {task.source === "ai" && (
+          <span className="text-ai" title="Оформлено AI">
+            ai
+          </span>
+        )}
+        {task.source === "mcp" && (
+          <span className="text-mcp" title="Создано агентом через MCP">
+            mcp
+          </span>
+        )}
+      </p>
     </div>
   );
 }
@@ -73,8 +81,6 @@ export default function TaskCard({ task, project, onOpen }: Props) {
     data: { task },
   });
 
-  // While dragging, the original stays in place dimmed; the moving copy is
-  // rendered by DragOverlay at the top layer (never clipped by columns).
   return (
     <div
       ref={setNodeRef}

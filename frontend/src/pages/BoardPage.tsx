@@ -101,17 +101,19 @@ export default function BoardPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex flex-col gap-3 border-b border-slate-200 bg-white/80 p-3 backdrop-blur md:px-5 dark:border-slate-800 dark:bg-slate-950/80">
+      <header className="flex flex-col gap-3 border-b border-edge/70 bg-surface/80 p-3 backdrop-blur md:px-5">
         <div className="flex items-center justify-between gap-3">
-          <h1 className="text-lg font-bold">TaskTracker</h1>
+          <h1 className="font-mono text-base font-medium">
+            <span className="caret">tasktracker</span>
+          </h1>
           <div className="flex flex-1 justify-center md:justify-end">
             <QuickAdd projects={projects} />
           </div>
           <button
             onClick={logout}
-            className="hidden text-sm text-slate-400 hover:text-slate-600 md:block"
+            className="hidden font-mono text-xs text-dim transition hover:text-ink md:block"
           >
-            Выйти
+            выйти
           </button>
         </div>
         <FilterBar projects={projects} filters={filters} onChange={setFilters} />
@@ -119,7 +121,7 @@ export default function BoardPage() {
 
       <main className="flex-1 overflow-hidden p-3 md:p-4">
         {tasksQuery.isError ? (
-          <p className="p-4 text-sm text-red-600">Не удалось загрузить задачи</p>
+          <p className="p-4 text-sm text-danger">Не удалось загрузить задачи</p>
         ) : (
           <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
             <div className="flex h-full snap-x snap-mandatory gap-3 overflow-x-auto md:snap-none">

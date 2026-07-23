@@ -8,11 +8,12 @@ export const STATUSES: { id: Status; title: string }[] = [
   { id: "done", title: "Done" },
 ];
 
-export const PRIORITIES: { id: Priority; title: string; badge: string }[] = [
-  { id: "low", title: "Низкий", badge: "bg-slate-200 text-slate-600" },
-  { id: "medium", title: "Средний", badge: "bg-sky-100 text-sky-700" },
-  { id: "high", title: "Высокий", badge: "bg-amber-100 text-amber-700" },
-  { id: "urgent", title: "Срочно", badge: "bg-red-100 text-red-700" },
+/** Приоритет — знак прибора, а не пилюля: medium молчит, остальные метятся. */
+export const PRIORITIES: { id: Priority; title: string; mark: string; cls: string }[] = [
+  { id: "low", title: "Низкий", mark: "↓", cls: "text-dim/70" },
+  { id: "medium", title: "Средний", mark: "", cls: "text-dim" },
+  { id: "high", title: "Высокий", mark: "↑", cls: "text-amber" },
+  { id: "urgent", title: "Срочно", mark: "‼", cls: "text-danger" },
 ];
 
 export interface Project {

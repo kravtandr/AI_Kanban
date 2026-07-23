@@ -28,37 +28,35 @@ export default function LoginPage() {
     <div className="flex min-h-full items-center justify-center p-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-xl dark:bg-slate-900"
+        className="w-full max-w-sm rounded-2xl border border-edge bg-surface p-8 shadow-2xl"
       >
-        <h1 className="mb-1 text-2xl font-bold">TaskTracker</h1>
-        <p className="mb-6 text-sm text-slate-500">Войдите, чтобы открыть доску</p>
+        <h1 className="mb-1 font-mono text-xl font-medium">
+          <span className="caret">tasktracker</span>
+        </h1>
+        <p className="mb-7 text-sm text-dim">Доска для вас и ваших агентов</p>
         <label className="mb-3 block">
-          <span className="mb-1 block text-sm font-medium">Логин</span>
+          <span className="eyebrow">Логин</span>
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="username"
             required
-            className="w-full rounded-lg border border-slate-300 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800"
+            className="input py-2.5"
           />
         </label>
-        <label className="mb-5 block">
-          <span className="mb-1 block text-sm font-medium">Пароль</span>
+        <label className="mb-6 block">
+          <span className="eyebrow">Пароль</span>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
             required
-            className="w-full rounded-lg border border-slate-300 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800"
+            className="input py-2.5"
           />
         </label>
-        {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded-lg bg-slate-900 py-2.5 font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
-        >
+        {error && <p className="mb-4 text-sm text-danger">{error}</p>}
+        <button type="submit" disabled={busy} className="btn-primary w-full py-2.5">
           {busy ? "Входим…" : "Войти"}
         </button>
       </form>

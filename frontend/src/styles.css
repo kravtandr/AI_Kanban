@@ -1,4 +1,28 @@
 @import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+/* «Ночная смена»: приборная панель для человека и его агентов.
+   Янтарь — действие человека, фиолет — AI, циан — MCP-агенты. */
+@theme {
+  --color-night: #0e1116;
+  --color-surface: #151a21;
+  --color-panel: #1a212b;
+  --color-card: #1f2732;
+  --color-edge: #2a3441;
+  --color-ink: #e9e5da;
+  --color-dim: #8a94a3;
+  --color-amber: #e8a03d;
+  --color-ai: #9d8cff;
+  --color-mcp: #56b6c2;
+  --color-danger: #e5644e;
+
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+}
 
 html,
 body,
@@ -7,11 +31,71 @@ body,
 }
 
 body {
-  @apply bg-slate-100 text-slate-900 antialiased;
+  @apply bg-night font-sans text-ink antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    @apply bg-slate-950 text-slate-100;
+:focus-visible {
+  outline: 2px solid var(--color-amber);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-edge) transparent;
+}
+
+@layer components {
+  .btn-primary {
+    @apply rounded-lg bg-amber px-4 py-2 text-sm font-medium text-night transition hover:brightness-110 disabled:opacity-40;
+  }
+  .btn-ghost {
+    @apply rounded-lg px-4 py-2 text-sm text-dim transition hover:bg-edge/40 hover:text-ink;
+  }
+  .btn-ai {
+    @apply rounded-lg bg-ai/15 px-3 py-1.5 text-xs font-medium text-ai transition hover:bg-ai/25 disabled:opacity-40;
+  }
+  .input {
+    @apply w-full rounded-lg border border-edge bg-night px-3 py-2 text-sm text-ink transition placeholder:text-dim/60 focus:border-amber focus:outline-none;
+  }
+  .eyebrow {
+    @apply mb-1 block font-mono text-[10px] tracking-[0.14em] text-dim uppercase;
+  }
+}
+
+/* Мигающий курсор терминала у логотипа */
+.caret::after {
+  content: "_";
+  color: var(--color-amber);
+  margin-left: 1px;
+  animation: caret-blink 1.2s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Черновик готов: один янтарный импульс */
+.draft-ready {
+  animation: draft-glow 0.7s ease-out 1;
+}
+
+@keyframes draft-glow {
+  from {
+    box-shadow: 0 0 0 0 rgb(232 160 61 / 0.4);
+  }
+  to {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret::after,
+  .draft-ready {
+    animation: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
   }
 }

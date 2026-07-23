@@ -18,40 +18,37 @@ interface Props {
   showStatus?: boolean;
 }
 
-const inputCls =
-  "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800";
-
 export default function TaskForm({ values, projects, onChange, showStatus = false }: Props) {
   const set = (patch: Partial<TaskFormValues>) => onChange({ ...values, ...patch });
 
   return (
     <div className="flex flex-col gap-3">
       <label className="block">
-        <span className="mb-1 block text-xs font-medium text-slate-500">Название</span>
+        <span className="eyebrow">Название</span>
         <input
           value={values.title}
           onChange={(e) => set({ title: e.target.value })}
           maxLength={200}
           required
-          className={inputCls}
+          className="input"
         />
       </label>
       <label className="block">
-        <span className="mb-1 block text-xs font-medium text-slate-500">Описание (Markdown)</span>
+        <span className="eyebrow">Описание · markdown</span>
         <textarea
           value={values.description}
           onChange={(e) => set({ description: e.target.value })}
           rows={5}
-          className={inputCls}
+          className="input font-mono text-[13px]"
         />
       </label>
       <div className="grid grid-cols-2 gap-3">
         <label className="block">
-          <span className="mb-1 block text-xs font-medium text-slate-500">Проект</span>
+          <span className="eyebrow">Проект</span>
           <select
             value={values.project_id}
             onChange={(e) => set({ project_id: Number(e.target.value) })}
-            className={inputCls}
+            className="input"
           >
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
@@ -61,11 +58,11 @@ export default function TaskForm({ values, projects, onChange, showStatus = fals
           </select>
         </label>
         <label className="block">
-          <span className="mb-1 block text-xs font-medium text-slate-500">Приоритет</span>
+          <span className="eyebrow">Приоритет</span>
           <select
             value={values.priority}
             onChange={(e) => set({ priority: e.target.value as Priority })}
-            className={inputCls}
+            className="input"
           >
             {PRIORITIES.map((p) => (
               <option key={p.id} value={p.id}>
@@ -76,11 +73,11 @@ export default function TaskForm({ values, projects, onChange, showStatus = fals
         </label>
         {showStatus && (
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-500">Колонка</span>
+            <span className="eyebrow">Колонка</span>
             <select
               value={values.status}
               onChange={(e) => set({ status: e.target.value as Status })}
-              className={inputCls}
+              className="input"
             >
               {STATUSES.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -91,22 +88,22 @@ export default function TaskForm({ values, projects, onChange, showStatus = fals
           </label>
         )}
         <label className="block">
-          <span className="mb-1 block text-xs font-medium text-slate-500">Срок</span>
+          <span className="eyebrow">Срок</span>
           <input
             type="date"
             value={values.due_date}
             onChange={(e) => set({ due_date: e.target.value })}
-            className={inputCls}
+            className="input"
           />
         </label>
       </div>
       <label className="block">
-        <span className="mb-1 block text-xs font-medium text-slate-500">Теги (через запятую)</span>
+        <span className="eyebrow">Теги · через запятую</span>
         <input
           value={values.tags}
           onChange={(e) => set({ tags: e.target.value })}
           placeholder="infra, home"
-          className={inputCls}
+          className="input font-mono text-[13px]"
         />
       </label>
     </div>

@@ -80,33 +80,33 @@ export default function TaskModal({ task, projects, onClose }: Props) {
           <button
             onClick={() => enhanceMutation.mutate()}
             disabled={enhanceMutation.isPending}
-            className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-200 disabled:opacity-50"
+            className="btn-ai"
           >
             {enhanceMutation.isPending ? "✨ Думаю…" : "✨ Оформить"}
           </button>
         </div>
-        {aiNote && <p className="mb-3 text-xs text-violet-600">{aiNote}</p>}
+        {aiNote && <p className="mb-3 font-mono text-xs text-ai">{aiNote}</p>}
         <TaskForm values={form} projects={projects} onChange={setForm} showStatus />
         <div className="mt-5 flex items-center justify-between">
           <button
             onClick={() => {
               if (window.confirm("Удалить задачу?")) deleteMutation.mutate();
             }}
-            className="rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+            className="btn-ghost text-danger hover:bg-danger/10 hover:text-danger"
           >
             Удалить
           </button>
           <div className="flex gap-2">
             <button
               onClick={onClose}
-              className="rounded-lg px-4 py-2 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="btn-ghost"
             >
               Отмена
             </button>
             <button
               onClick={() => saveMutation.mutate()}
               disabled={saveMutation.isPending || !form.title.trim()}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+              className="btn-primary"
             >
               Сохранить
             </button>
