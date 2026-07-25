@@ -30,6 +30,15 @@ body,
   height: 100%;
 }
 
+html {
+  /* Интерфейс существует только в тёмной схеме: без этого браузер рисует
+     светлыми нативные виджеты — календарь у input[type=date], автозаполнение
+     и скроллбары. */
+  color-scheme: dark;
+  /* Гасим серый прямоугольник тапа: обратную связь даём сами через :active. */
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   @apply bg-night font-sans text-ink antialiased;
 }
@@ -37,6 +46,16 @@ body {
 :focus-visible {
   outline: 2px solid var(--color-amber);
   outline-offset: 2px;
+}
+
+/* Убирает 300ms задержку двойного тапа на всём интерактиве */
+button,
+a,
+input,
+select,
+textarea,
+[role="button"] {
+  touch-action: manipulation;
 }
 
 * {
@@ -53,26 +72,45 @@ body {
 
 @layer components {
   .btn-primary {
-    @apply rounded-lg bg-amber px-4 py-2 text-sm font-medium text-night transition hover:brightness-110 disabled:opacity-40;
+    @apply rounded-lg bg-amber px-4 py-2 text-sm font-medium text-night transition hover:brightness-110 active:brightness-95 disabled:opacity-40;
   }
   .btn-ghost {
-    @apply rounded-lg px-4 py-2 text-sm text-dim transition hover:bg-edge/40 hover:text-ink;
+    @apply rounded-lg px-4 py-2 text-sm text-dim transition hover:bg-edge/40 hover:text-ink active:bg-edge/60;
   }
   .btn-ai {
-    @apply rounded-lg bg-ai/15 px-3 py-1.5 text-xs font-medium text-ai transition hover:bg-ai/25 disabled:opacity-40;
+    @apply rounded-lg bg-ai/15 px-3 py-1.5 text-xs font-medium text-ai transition hover:bg-ai/25 active:bg-ai/35 disabled:opacity-40;
   }
+  /* Никакого focus:outline-none: .input:focus (0,2,0) перебил бы глобальный
+     :focus-visible (0,1,0) и оставил поля вообще без кольца фокуса. */
   .input {
-    @apply w-full rounded-lg border border-edge bg-night px-3 py-2 text-sm text-ink transition placeholder:text-dim/60 focus:border-amber focus:outline-none;
+    @apply w-full rounded-lg border border-edge bg-night px-3 py-2 text-sm text-ink transition placeholder:text-dim/60 focus:border-amber;
+  }
+  .input[aria-invalid="true"] {
+    @apply border-danger;
   }
   .eyebrow {
     @apply mb-1 block font-mono text-[10px] tracking-[0.14em] text-dim uppercase;
   }
   .btn-icon {
-    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-dim transition hover:bg-edge/40 hover:text-ink;
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-dim transition hover:bg-edge/40 hover:text-ink active:bg-edge/60;
   }
   .tab {
-    @apply shrink-0 rounded-lg px-3 py-1.5 font-mono text-xs whitespace-nowrap transition;
+    @apply shrink-0 rounded-lg px-3 py-1.5 font-mono text-xs whitespace-nowrap transition active:bg-edge/40;
   }
+  /* Инлайн-ошибка поля формы */
+  .field-error {
+    @apply mt-1 block text-xs text-danger;
+  }
+}
+
+/* Длинные колонки: браузер пропускает раскладку и отрисовку карточек вне
+   вьюпорта. Дешевле виртуализации и, в отличие от неё, не ломает измерение
+   прямоугольников в dnd-kit — перетаскивают всегда видимую карточку.
+   `auto` в contain-intrinsic-size велит запомнить реальную высоту, чтобы
+   скроллбар не прыгал. */
+.card-list > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 68px;
 }
 
 /* Мигающий курсор терминала у логотипа */
@@ -115,13 +153,21 @@ body {
   }
 }
 
+/* Перечислять анимации поимённо не масштабируется — утилитарные классы
+   Tailwind (animate-spin у спиннера черновика) в такой список не попадают.
+   Глушим весь класс целиком, декоративные снимаем явно. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
   .caret::after,
   .draft-ready,
   .mic-live {
     animation: none;
-  }
-  * {
-    transition-duration: 0.01ms !important;
   }
 }

@@ -52,12 +52,26 @@ function MobileDropZone({ status, title }: { status: Status; title: string }) {
 export default function BoardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
-  const [openTask, setOpenTask] = useState<Task | null>(null);
   const [createStatus, setCreateStatus] = useState<Status | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [mobileStatus, setMobileStatus] = useState<Status>("todo");
   const queryClient = useQueryClient();
+
+  // Открытая задача и выбранная мобильная колонка живут в URL: ссылку на
+  // задачу можно переслать, «назад» закрывает модалку. createStatus и
+  // showFilters остаются локальными — транзиентный UI, делиться нечем.
+  const updateParams = (mutate: (p: URLSearchParams) => void, replace = true) => {
+    const params = new URLSearchParams(searchParams);
+    mutate(params);
+    setSearchParams(params, { replace });
+  };
+
+  const mobileStatus: Status = STATUSES.find((s) => s.id === searchParams.get("col"))?.id ?? "todo";
+  const setMobileStatus = (status: Status) => updateParams((p) => p.set("col", status));
+  // Открытие кладёт запись в историю (кнопка «назад» = закрыть),
+  // закрытие её замещает, иначе «назад» открыл бы модалку снова.
+  const openTaskById = (task: Task) => updateParams((p) => p.set("task", String(task.id)), false);
+  const closeTask = () => updateParams((p) => p.delete("task"));
 
   // После drag браузер шлёт click по исходной карточке — гасим его,
   // чтобы перетаскивание не открывало модалку задачи.
@@ -127,11 +141,16 @@ export default function BoardPage() {
   });
 
   function setFilters(next: Filters) {
-    const params = new URLSearchParams();
-    next.projects.forEach((id) => params.append("project", String(id)));
-    if (next.priority) params.set("priority", next.priority);
-    if (next.q) params.set("q", next.q);
-    setSearchParams(params, { replace: true });
+    // Мутируем текущие параметры, а не строим с нуля: иначе смена фильтра
+    // сбрасывала бы ?task= и ?col=.
+    updateParams((params) => {
+      params.delete("project");
+      next.projects.forEach((id) => params.append("project", String(id)));
+      params.delete("priority");
+      if (next.priority) params.set("priority", next.priority);
+      params.delete("q");
+      if (next.q) params.set("q", next.q);
+    });
   }
 
   function onDragStart(event: DragStartEvent) {
@@ -182,6 +201,28 @@ export default function BoardPage() {
   const projects = projectsQuery.data ?? [];
   const projectMap = new Map(projects.map((p) => [p.id, p]));
   const tasks = tasksQuery.data ?? [];
+  const openTaskId = Number(searchParams.get("task")) || null;
+  const openTask = openTaskId ? (tasks.find((t) => t.id === openTaskId) ?? null) : null;
+
+  // В API нет GET /tasks/:id, поэтому задача берётся из уже загруженной
+  // выборки. Если её там нет (удалена или не проходит фильтр) — снимаем
+  // параметр, чтобы ссылка не указывала в пустоту.
+  const tasksUpdatedAt = tasksQuery.dataUpdatedAt;
+  useEffect(() => {
+    if (!openTaskId || tasksQuery.isPending) return;
+    if (tasksQuery.data?.some((t) => t.id === openTaskId)) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("task");
+        return next;
+      },
+      { replace: true },
+    );
+    // tasksUpdatedAt — стабильный признак «пришли свежие данные»,
+    // в отличие от самого массива, новой ссылки на каждый рендер
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTaskId, tasksQuery.isPending, tasksUpdatedAt, setSearchParams]);
   const countByStatus = new Map<Status, number>(
     STATUSES.map((s) => [s.id, tasks.filter((t) => t.status === s.id).length]),
   );
@@ -189,6 +230,12 @@ export default function BoardPage() {
 
   return (
     <div className="flex h-full flex-col">
+      <a
+        href="#board-main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-amber focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-night"
+      >
+        К содержимому
+      </a>
       {/* Без backdrop-blur: fixed-строка ввода QuickAdd на мобильном не должна
         получить containing block от предка с backdrop-filter. */}
       <header className="border-b border-edge/70 bg-surface">
@@ -201,12 +248,13 @@ export default function BoardPage() {
           </div>
           <button
             onClick={() => setShowFilters((v) => !v)}
-            aria-label="Фильтры"
+            aria-label={filterCount > 0 ? `Фильтры, активных: ${filterCount}` : "Фильтры"}
             aria-expanded={showFilters}
             title="Фильтры"
             className={`btn-icon relative ${showFilters ? "bg-edge/40 text-ink" : ""}`}
           >
             <svg
+              aria-hidden="true"
               width="16"
               height="16"
               viewBox="0 0 24 24"
@@ -219,7 +267,10 @@ export default function BoardPage() {
               <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" />
             </svg>
             {filterCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber px-1 font-mono text-[10px] font-semibold text-night">
+              <span
+                aria-hidden="true"
+                className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber px-1 font-mono text-[10px] font-semibold text-night"
+              >
                 {filterCount}
               </span>
             )}
@@ -243,22 +294,26 @@ export default function BoardPage() {
         )}
       </header>
 
-      <main className="flex flex-1 flex-col overflow-hidden p-3 md:p-4">
-        {projectsQuery.isError && (
-          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
-            <span>
-              Не удалось загрузить проекты
-              {projectsQuery.error instanceof Error ? `: ${projectsQuery.error.message}` : ""} —
-              создание задач приостановлено
-            </span>
-            <button
-              onClick={() => projectsQuery.refetch()}
-              className="rounded-md border border-danger/50 px-2.5 py-1 font-mono text-xs transition hover:bg-danger/15"
-            >
-              Повторить
-            </button>
-          </div>
-        )}
+      <main id="board-main" tabIndex={-1} className="flex flex-1 flex-col overflow-hidden p-3 md:p-4">
+        {/* Живые области смонтированы всегда: содержимое, появляющееся вместе
+          с самим aria-live элементом, скринридером не зачитывается. */}
+        <div aria-live="polite">
+          {projectsQuery.isError && (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+              <span>
+                Не удалось загрузить проекты
+                {projectsQuery.error instanceof Error ? `: ${projectsQuery.error.message}` : ""} —
+                создание задач приостановлено
+              </span>
+              <button
+                onClick={() => projectsQuery.refetch()}
+                className="rounded-md border border-danger/50 px-2.5 py-1 font-mono text-xs transition hover:bg-danger/15 active:bg-danger/25"
+              >
+                Повторить
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Мобильный переключатель колонок: одна колонка на экран.
           Во время перетаскивания табы уступают место drop-зонам статусов. */}
@@ -275,6 +330,7 @@ export default function BoardPage() {
                 <button
                   key={s.id}
                   onClick={() => setMobileStatus(s.id)}
+                  aria-pressed={active}
                   className={`tab ${active ? "bg-panel text-ink" : "text-dim"}`}
                 >
                   {s.title}
@@ -292,15 +348,20 @@ export default function BoardPage() {
             aria-label="Добавить задачу в выбранную колонку"
             className="btn-icon h-8 w-8 font-mono text-base"
           >
-            +
+            <span aria-hidden="true">+</span>
           </button>
             </>
           )}
         </div>
 
-        {tasksQuery.isError ? (
-          <p className="p-4 text-sm text-danger">Не удалось загрузить задачи</p>
-        ) : (
+        <div aria-live="polite">
+          {tasksQuery.isError && (
+            <p className="p-4 text-sm text-danger">
+              Не удалось загрузить задачи — проверьте соединение и обновите страницу
+            </p>
+          )}
+        </div>
+        {!tasksQuery.isError && (
           <DndContext
             sensors={sensors}
             // Drop-зоны мобильных табов монтируются уже во время drag —
@@ -318,7 +379,7 @@ export default function BoardPage() {
                   title={column.title}
                   tasks={tasks.filter((t) => t.status === column.id)}
                   projects={projectMap}
-                  onOpen={setOpenTask}
+                  onOpen={openTaskById}
                   onAdd={setCreateStatus}
                   activeOnMobile={column.id === mobileStatus}
                   clickGuard={suppressCardClick}
@@ -339,7 +400,9 @@ export default function BoardPage() {
       </main>
 
       {openTask && (
-        <TaskModal task={openTask} projects={projects} onClose={() => setOpenTask(null)} />
+        // key по id: при переходе с ?task=1 на ?task=2 модалка должна
+        // пересобраться, иначе останется снапшот формы прежней задачи
+        <TaskModal key={openTask.id} task={openTask} projects={projects} onClose={closeTask} />
       )}
       {createStatus && (
         <NewTaskModal

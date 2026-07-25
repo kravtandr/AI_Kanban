@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../api";
 import type { Project, Task } from "../types";
 import Modal from "./Modal";
@@ -29,6 +29,8 @@ export default function TaskModal({ task, projects, onClose }: Props) {
   const [initial] = useState<TaskFormValues>(() => toFormValues(task));
   const [form, setForm] = useState<TaskFormValues>(initial);
   const [aiNote, setAiNote] = useState<string | null>(null);
+  const [titleError, setTitleError] = useState<string | null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
   const invalidate = () => {
@@ -90,15 +92,23 @@ export default function TaskModal({ task, projects, onClose }: Props) {
           priority: response.draft.priority,
           tags: response.draft.tags.length ? response.draft.tags.join(", ") : prev.tags,
         }));
-        setAiNote("✨ AI предложил изменения — проверьте и сохраните");
+        setAiNote("AI предложил изменения — проверьте и сохраните");
       } else {
-        setAiNote(`⚠️ AI недоступен: ${response.ai_error}`);
+        setAiNote(`AI недоступен: ${response.ai_error} — заполните поля вручную`);
       }
     },
   });
 
+  // Кнопка сабмита остаётся активной: пустое название объясняем инлайн
+  // и уводим туда фокус, а не гасим кнопку без причины.
   const save = () => {
-    if (!form.title.trim() || saveMutation.isPending) return;
+    if (saveMutation.isPending) return;
+    if (!form.title.trim()) {
+      setTitleError("Введите название задачи");
+      titleRef.current?.focus();
+      return;
+    }
+    setTitleError(null);
     const patch = buildPatch();
     if (Object.keys(patch).length === 0) {
       onClose(); // менять нечего — закрываем без запроса
@@ -108,24 +118,33 @@ export default function TaskModal({ task, projects, onClose }: Props) {
   };
 
   return (
-    <Modal onClose={requestClose} onSubmit={save}>
-      <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Задача #{task.id}</h3>
-          <button
-            onClick={() => enhanceMutation.mutate()}
-            disabled={enhanceMutation.isPending}
-            className="btn-ai"
-          >
-            {enhanceMutation.isPending ? "✨ Думаю…" : "✨ Оформить"}
-          </button>
-        </div>
+    <Modal
+      onClose={requestClose}
+      onSubmit={save}
+      title={`Задача #${task.id}`}
+      headerAction={
+        <button
+          onClick={() => enhanceMutation.mutate()}
+          disabled={enhanceMutation.isPending}
+          className="btn-ai shrink-0"
+        >
+          <span aria-hidden="true">✨</span>{" "}
+          {enhanceMutation.isPending ? "Думаю…" : "Оформить"}
+        </button>
+      }
+    >
+      {/* Живая область смонтирована всегда: содержимое, вставленное в уже
+        существующий aria-live контейнер, зачитывается — в отличие от
+        элемента, который сам появляется вместе с атрибутом. */}
+      <div aria-live="polite">
         {aiNote && <p className="mb-3 font-mono text-xs text-ai">{aiNote}</p>}
         {enhanceMutation.isError && (
           <p className="mb-3 text-sm text-danger">
-            ⚠️ Не удалось запросить AI:{" "}
+            Не удалось запросить AI:{" "}
             {enhanceMutation.error instanceof Error
               ? enhanceMutation.error.message
-              : "сеть недоступна"}
+              : "сеть недоступна"}{" "}
+            — проверьте соединение и попробуйте ещё раз
           </p>
         )}
         {(saveMutation.isError || deleteMutation.isError) && (
@@ -134,32 +153,36 @@ export default function TaskModal({ task, projects, onClose }: Props) {
             раз
           </p>
         )}
-        <TaskForm values={form} projects={projects} onChange={setForm} showStatus />
-        <div className="mt-5 flex items-center justify-between">
-          <button
-            onClick={() => {
-              if (window.confirm("Удалить задачу?")) deleteMutation.mutate();
-            }}
-            className="btn-ghost text-danger hover:bg-danger/10 hover:text-danger"
-          >
-            Удалить
+      </div>
+      <TaskForm
+        values={form}
+        projects={projects}
+        onChange={(next) => {
+          setForm(next);
+          if (titleError && next.title.trim()) setTitleError(null);
+        }}
+        showStatus
+        titleError={titleError}
+        titleRef={titleRef}
+      />
+      <div className="mt-5 flex items-center justify-between">
+        <button
+          onClick={() => {
+            if (window.confirm("Удалить задачу?")) deleteMutation.mutate();
+          }}
+          className="btn-ghost text-danger hover:bg-danger/10 hover:text-danger"
+        >
+          Удалить
+        </button>
+        <div className="flex gap-2">
+          <button onClick={requestClose} className="btn-ghost">
+            Отмена
           </button>
-          <div className="flex gap-2">
-            <button
-              onClick={requestClose}
-              className="btn-ghost"
-            >
-              Отмена
-            </button>
-            <button
-              onClick={save}
-              disabled={saveMutation.isPending || !form.title.trim()}
-              className="btn-primary"
-            >
-              {saveMutation.isPending ? "Сохраняю…" : "Сохранить"}
-            </button>
-          </div>
+          <button onClick={save} disabled={saveMutation.isPending} className="btn-primary">
+            {saveMutation.isPending ? "Сохраняю…" : "Сохранить"}
+          </button>
         </div>
+      </div>
     </Modal>
   );
 }

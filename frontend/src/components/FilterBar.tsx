@@ -32,12 +32,19 @@ export default function FilterBar({ projects, filters, onChange, onLogout }: Pro
   return (
     <div className="flex flex-col gap-2.5 md:flex-row md:flex-wrap md:items-center">
       <input
+        type="search"
+        name="q"
+        autoComplete="off"
+        spellCheck={false}
+        aria-label="Поиск по задачам"
         value={filters.q}
         onChange={(e) => onChange({ ...filters, q: e.target.value })}
         placeholder="поиск…"
         className="input py-1.5 font-mono text-xs md:w-48"
       />
       <select
+        name="priority"
+        aria-label="Фильтр по приоритету"
         value={filters.priority}
         onChange={(e) => onChange({ ...filters, priority: e.target.value as Priority | "" })}
         className="input w-full py-1.5 text-xs md:w-auto"
@@ -56,19 +63,25 @@ export default function FilterBar({ projects, filters, onChange, onLogout }: Pro
             <button
               key={project.id}
               onClick={() => toggleProject(project.id)}
-              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition ${
+              aria-pressed={active}
+              title={project.name}
+              className={`flex max-w-[14rem] items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition ${
                 active
                   ? "border-amber/60 bg-amber/10 text-ink"
-                  : "border-edge text-dim hover:border-dim/60 hover:text-ink"
+                  : "border-edge text-dim hover:border-dim/60 hover:text-ink active:bg-edge/40"
               }`}
             >
               <span
-                className="h-1.5 w-1.5 rounded-full"
+                aria-hidden="true"
+                className="h-1.5 w-1.5 shrink-0 rounded-full"
                 style={{ backgroundColor: project.color }}
               />
-              {project.name}
+              <span className="truncate">{project.name}</span>
               {project.active_tasks > 0 && (
-                <span className="text-dim/70">{project.active_tasks}</span>
+                <span className="shrink-0 text-dim/70">
+                  <span className="sr-only">активных задач: </span>
+                  {project.active_tasks}
+                </span>
               )}
             </button>
           );

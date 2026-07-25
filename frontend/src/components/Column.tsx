@@ -51,7 +51,7 @@ export default function Column({
           +
         </button>
       </header>
-      <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-0.5 pb-28 md:pb-2">
+      <div className="card-list flex flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-0.5 pb-28 md:pb-2">
         {tasks.map((task) => (
           <TaskCard
             key={task.id}

@@ -26,7 +26,9 @@ export function TaskCardView({ task, project, overlay = false }: ViewProps) {
           : "border-edge/60 transition hover:border-dim/40"
       }`}
     >
-      <p className="text-[15px] leading-snug font-medium md:text-sm">{task.title}</p>
+      {/* break-words: заголовок может прийти от агента одной длинной строкой
+        без пробелов (URL, идентификатор) и распёр бы карточку. */}
+      <p className="text-[15px] leading-snug font-medium break-words md:text-sm">{task.title}</p>
       {hasMeta && (
         <p className="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-dim">
           {showProject && (

@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
+import { formatDue } from "../lib/dates";
 import { getSpeechRecognition, type SpeechRecognitionLike } from "../lib/speech";
 import type { Project } from "../types";
 import { PRIORITIES } from "../types";
@@ -75,8 +76,11 @@ export default function QuickAdd({ projects }: Props) {
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
   const [micError, setMicError] = useState<string | null>(null);
+  const [confirmDiscardId, setConfirmDiscardId] = useState<number | null>(null);
+  const [draftTitleError, setDraftTitleError] = useState<string | null>(null);
   const nextId = useRef(items.reduce((max, it) => Math.max(max, it.id), 0) + 1);
   const inputRef = useRef<HTMLInputElement>(null);
+  const draftTitleRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   // Индекс последнего применённого финального сегмента диктовки
   const finalIndexRef = useRef(0);
@@ -157,6 +161,24 @@ export default function QuickAdd({ projects }: Props) {
 
   const patchItem = (id: number, patch: Partial<DraftItem>) =>
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+
+  // Отбрасывание черновика необратимо, поэтому в два шага: первый клик
+  // взводит подтверждение, второй удаляет. Взвод сам спадает через 4с,
+  // иначе клик через минуту сработал бы неожиданно.
+  useEffect(() => {
+    if (confirmDiscardId === null) return;
+    const timer = setTimeout(() => setConfirmDiscardId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmDiscardId]);
+
+  function discard(id: number) {
+    if (confirmDiscardId !== id) {
+      setConfirmDiscardId(id);
+      return;
+    }
+    setConfirmDiscardId(null);
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }
 
   function toggleDictation() {
     if (!speechCtor) return;
@@ -306,6 +328,20 @@ export default function QuickAdd({ projects }: Props) {
   const editingItem = items.find((it) => it.id === editingId);
   const projectName = (id: number) => projects.find((p) => p.id === id)?.name ?? "…";
 
+  // «Создать» остаётся активной: пустое название объясняем инлайн и уводим
+  // туда фокус, а не гасим кнопку без объяснения.
+  function submitDraft() {
+    if (!editingItem?.form) return;
+    if (!editingItem.form.title.trim()) {
+      setDraftTitleError("Введите название задачи");
+      draftTitleRef.current?.focus();
+      return;
+    }
+    setDraftTitleError(null);
+    setEditingId(null);
+    void createItem(editingItem);
+  }
+
   return (
     <>
       {/* Мобильная позиция fixed требует, чтобы ни у одного предка не было
@@ -315,27 +351,43 @@ export default function QuickAdd({ projects }: Props) {
         className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-2 border-t border-edge/70 bg-surface p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:w-full md:max-w-xl md:border-0 md:bg-transparent md:p-0"
       >
         <div className="relative flex-1">
-          <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 font-mono text-sm text-amber">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 font-mono text-sm text-amber"
+          >
             ›
           </span>
-          {(micError || (listening && interim)) && (
-            <span
-              className={`pointer-events-none absolute bottom-full left-0 z-10 mb-2 max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] shadow-xl ${
-                micError ? "text-danger" : "text-dim italic"
-              }`}
-            >
-              {micError ?? `…${interim}`}
-            </span>
-          )}
+          <div className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 w-full">
+            {/* aria-live только на ошибке: промежуточный транскрипт меняется
+              на каждом слове и превратил бы скринридер в скороговорку. */}
+            <div aria-live="polite">
+              {micError && (
+                <span className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-danger shadow-xl">
+                  {micError}
+                </span>
+              )}
+            </div>
+            {!micError && listening && interim && (
+              <span
+                aria-hidden="true"
+                className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-dim italic shadow-xl"
+              >
+                …{interim}
+              </span>
+            )}
+          </div>
           <input
             ref={inputRef}
+            name="quick-add"
+            autoComplete="off"
+            aria-label="Быстрое добавление задачи"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               // Симметрично хоткею n: Esc возвращает фокус доске
               if (e.key === "Escape") e.currentTarget.blur();
             }}
-            placeholder="опиши задачу — ai оформит"
+            placeholder="опиши задачу — ai оформит…"
             className="input h-11 pl-8 font-mono text-[13px] md:h-10"
           />
         </div>
@@ -348,6 +400,7 @@ export default function QuickAdd({ projects }: Props) {
             className={`btn-icon h-11 w-11 md:h-10 md:w-10 ${listening ? "mic-live" : ""}`}
           >
             <svg
+              aria-hidden="true"
               width="17"
               height="17"
               viewBox="0 0 24 24"
@@ -369,15 +422,26 @@ export default function QuickAdd({ projects }: Props) {
           title={!projectsReady ? "Проекты ещё не загружены" : undefined}
           className="btn-primary h-11 shrink-0 px-4 md:h-10"
         >
-          <span className="font-mono md:hidden">↑</span>
+          <span aria-hidden="true" className="font-mono md:hidden">
+            ↑
+          </span>
           <span className="hidden md:inline">Добавить</span>
         </button>
       </form>
 
+      {/* Смонтирована всегда: живая область, появляющаяся вместе с первым
+        сообщением, не зачитывается. */}
+      <div className="sr-only" aria-live="polite">
+        {items.length > 0 ? `Черновиков: ${items.length}, готово к созданию: ${readyCount}` : ""}
+      </div>
+
       {items.length > 0 &&
         createPortal(
-          <div className="fixed inset-x-2 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 md:inset-x-auto md:right-4 md:bottom-4 md:w-[26rem]">
-            <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-edge bg-surface p-3 shadow-2xl md:max-h-[60vh]">
+          <section
+            aria-label="Черновики задач"
+            className="fixed inset-x-2 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 md:inset-x-auto md:right-4 md:bottom-4 md:w-[26rem]"
+          >
+            <div className="max-h-[55vh] overflow-y-auto overscroll-contain rounded-xl border border-edge bg-surface p-3 shadow-2xl md:max-h-[60vh]">
               <div className="mb-2 flex items-center justify-between">
                 <span className="font-mono text-[11px] tracking-[0.16em] text-dim uppercase">
                   черновики · {items.length}
@@ -409,31 +473,46 @@ export default function QuickAdd({ projects }: Props) {
                           </span>
                           <div className="flex shrink-0 gap-1">
                             <button
-                              onClick={() => setEditingId(item.id)}
+                              onClick={() => {
+                                setDraftTitleError(null);
+                                setEditingId(item.id);
+                              }}
                               title="Редактировать"
                               aria-label="Редактировать черновик"
                               className="flex h-8 w-8 items-center justify-center rounded-lg text-sm text-dim transition hover:bg-edge/50 hover:text-ink"
                             >
-                              ✎
+                              <span aria-hidden="true">✎</span>
                             </button>
                             <button
                               onClick={() => createItem(item)}
                               disabled={item.status === "creating"}
                               title="Создать задачу"
                               aria-label="Создать задачу"
-                              className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber text-sm font-semibold text-night transition hover:brightness-110 disabled:opacity-40"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber text-sm font-semibold text-night transition hover:brightness-110 active:brightness-95 disabled:opacity-40"
                             >
-                              ✓
+                              <span aria-hidden="true">✓</span>
                             </button>
                             <button
-                              onClick={() =>
-                                setItems((prev) => prev.filter((it) => it.id !== item.id))
+                              onClick={() => discard(item.id)}
+                              title={
+                                confirmDiscardId === item.id
+                                  ? "Нажмите ещё раз, чтобы отбросить"
+                                  : "Отбросить черновик"
                               }
-                              title="Отбросить черновик"
-                              aria-label="Отбросить черновик"
-                              className="flex h-8 w-8 items-center justify-center rounded-lg text-sm text-dim transition hover:bg-danger/15 hover:text-danger"
+                              aria-label={
+                                confirmDiscardId === item.id
+                                  ? "Подтвердите: отбросить черновик"
+                                  : "Отбросить черновик"
+                              }
+                              className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm transition ${
+                                confirmDiscardId === item.id
+                                  ? "bg-danger/20 font-semibold text-danger"
+                                  : "text-dim hover:bg-danger/15 hover:text-danger"
+                              }`}
                             >
-                              ✕
+                              <span aria-hidden="true">
+                                {confirmDiscardId === item.id ? "?" : "✕"}
+                              </span>
                             </button>
                           </div>
                         </div>
@@ -442,10 +521,10 @@ export default function QuickAdd({ projects }: Props) {
                           <span>
                             {PRIORITIES.find((p) => p.id === item.form?.priority)?.title.toLowerCase()}
                           </span>
-                          {item.form?.due_date && <span>до {item.form.due_date}</span>}
+                          {item.form?.due_date && <span>до {formatDue(item.form.due_date)}</span>}
                           {!item.aiOk && (
                             <span className="text-amber" title={item.aiError ?? undefined}>
-                              ⚠ без ai
+                              <span aria-hidden="true">⚠</span> без ai
                             </span>
                           )}
                         </div>
@@ -455,38 +534,28 @@ export default function QuickAdd({ projects }: Props) {
                 ))}
               </div>
             </div>
-          </div>,
+          </section>,
           document.body,
         )}
 
       {editingItem?.form && (
-        <Modal
-          onClose={() => setEditingId(null)}
-          onSubmit={() => {
-            if (!editingItem.form?.title.trim()) return;
-            setEditingId(null);
-            void createItem(editingItem);
-          }}
-        >
-          <h3 className="mb-4 text-lg font-semibold">Черновик задачи</h3>
+        <Modal onClose={() => setEditingId(null)} onSubmit={submitDraft} title="Черновик задачи">
           <TaskForm
             values={editingItem.form}
             projects={projects}
-            onChange={(form) => patchItem(editingItem.id, { form })}
+            onChange={(form) => {
+              patchItem(editingItem.id, { form });
+              if (draftTitleError && form.title.trim()) setDraftTitleError(null);
+            }}
             showStatus
+            titleError={draftTitleError}
+            titleRef={draftTitleRef}
           />
           <div className="mt-5 flex justify-end gap-2">
             <button onClick={() => setEditingId(null)} className="btn-ghost">
               Закрыть
             </button>
-            <button
-              onClick={() => {
-                setEditingId(null);
-                void createItem(editingItem);
-              }}
-              disabled={!editingItem.form.title.trim()}
-              className="btn-primary"
-            >
+            <button onClick={submitDraft} className="btn-primary">
               Создать
             </button>
           </div>
