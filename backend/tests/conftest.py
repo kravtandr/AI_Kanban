@@ -2,7 +2,7 @@ import os
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.pool import StaticPool
 
 # Make sure a developer's real keys/endpoints never leak into tests.
@@ -25,11 +25,32 @@ USERNAME = "andrew"
 PASSWORD = "correct-horse-battery"
 
 
+def _install_unicode_lower(engine) -> None:
+    """Научить SQLite приводить регистр не только в ASCII.
+
+    Встроенный `lower()` в SQLite работает только с ASCII: `lower('Сварог')`
+    возвращает 'Сварог' как есть. Регистронезависимый поиск проектов
+    (find_project_by_name, проверка уникальности в create_project) сравнивает
+    SQL-овский lower() с приведённой в Python строкой, поэтому на SQLite он
+    не находил НИ ОДНО кириллическое имя — даже при точном совпадении.
+    В проде на PostgreSQL lower() знает про UTF-8 и всё работает, то есть
+    расходились не продукт с ожиданием, а тесты с продом: ветка «нашёл
+    существующий проект» проверялась только на латинице.
+    """
+
+    @event.listens_for(engine, "connect")
+    def _register(dbapi_connection, _record):  # pragma: no cover - обвязка соединения
+        dbapi_connection.create_function(
+            "lower", 1, lambda value: value.lower() if isinstance(value, str) else value
+        )
+
+
 @pytest.fixture()
 def client() -> TestClient:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
+    _install_unicode_lower(engine)
     Base.metadata.create_all(engine)
     db_module.set_engine_for_tests(engine)
     get_settings.cache_clear()
