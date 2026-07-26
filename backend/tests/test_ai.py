@@ -226,3 +226,64 @@ def test_backfill_never_touches_inbox(auth_client, monkeypatch):
     assert inbox["description"] == ""
 
     get_settings.cache_clear()
+
+
+def test_project_context_excludes_inbox(client):
+    """Inbox — fallback, а не вариант выбора: в индексе для LLM его быть не должно.
+
+    Пока он там был, слабая локальная модель выбирала его как единственный
+    знакомый вариант, и все задачи оседали в Inbox (см. спеку, раздел 3).
+    """
+    with db_module.get_session_factory()() as db:
+        context = ai_svc._project_context(db)
+    assert "Inbox" not in context
+    assert "Projects:\n(none yet)" in context
+
+
+def test_project_context_lists_real_projects_without_inbox(auth_client):
+    auth_client.post("/api/v1/projects", json={"name": "Сварог", "description": "Платформа Сварог"})
+    with db_module.get_session_factory()() as db:
+        context = ai_svc._project_context(db)
+    assert "- Сварог — Платформа Сварог" in context
+    assert "Inbox" not in context
+
+
+def test_project_context_marks_project_without_description(auth_client):
+    auth_client.post("/api/v1/projects", json={"name": "Дом"})
+    with db_module.get_session_factory()() as db:
+        context = ai_svc._project_context(db)
+    assert "- Дом (no description yet)" in context
+
+
+def test_system_prompt_forbids_catch_all_project_names():
+    """Правило A2: модель не должна отвечать именем fallback-корзины."""
+    assert "never" in ai_svc.SYSTEM_PROMPT
+    assert '"Inbox"' in ai_svc.SYSTEM_PROMPT
+    assert "transliteration" in ai_svc.SYSTEM_PROMPT
+
+
+def test_resolve_strips_description_glued_to_project_name(auth_client):
+    """Модель может скопировать строку индекса целиком, вместе с описанием.
+
+    Наблюдалось 2 раза из 5 на локальной модели. Без защиты это создаёт
+    проект-мусор с именем до 100 символов вместо попадания в существующий.
+    """
+    auth_client.post("/api/v1/projects", json={"name": "Сварог", "description": "Платформа Сварог"})
+    projects_before = len(auth_client.get("/api/v1/projects").json())
+
+    with db_module.get_session_factory()() as db:
+        expected = project_svc.find_project_by_name(db, "Сварог")
+        assert expected is not None
+        resolved = ai_svc.resolve_project_id(db, "Сварог — Платформа Сварог: бэкенд и деплой.")
+        assert resolved == expected.id
+
+    assert len(auth_client.get("/api/v1/projects").json()) == projects_before
+
+
+def test_resolve_keeps_dash_in_genuinely_new_project_name(auth_client):
+    """Тире внутри осмысленного имени не должно ломать создание проекта."""
+    with db_module.get_session_factory()() as db:
+        project_id = ai_svc.resolve_project_id(db, "Аудио-железо", "Усилители и колонки")
+        created = project_svc.find_project_by_name(db, "Аудио-железо")
+        assert created is not None
+        assert created.id == project_id

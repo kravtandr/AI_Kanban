@@ -86,3 +86,35 @@ def test_openai_invalid_json_degrades(auth_client, monkeypatch):
 
     assert body["ai_ok"] is False
     assert body["draft"]["title"] == "странный запрос"
+
+
+def test_openai_chat_pins_temperature_to_zero(monkeypatch):
+    """Без temperature=0 имя нового проекта меняется от прогона к прогону
+    и повторный черновик той же заметки создаёт дубликат проекта."""
+    _use_openai(monkeypatch)
+    captured: dict = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [{"message": {"content": DRAFT_JSON}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+            }
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return FakeResponse()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+    ai_svc._openai_chat("system", "user")
+
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    assert captured["json"]["temperature"] == 0

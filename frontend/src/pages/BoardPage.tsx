@@ -15,10 +15,13 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import Column from "../components/Column";
 import FilterBar, { activeFilterCount, type Filters } from "../components/FilterBar";
+import NewProjectModal from "../components/NewProjectModal";
 import NewTaskModal from "../components/NewTaskModal";
 import QuickAdd from "../components/QuickAdd";
 import { TaskCardView } from "../components/TaskCard";
+import TaskContextMenu from "../components/TaskContextMenu";
 import TaskModal from "../components/TaskModal";
+import { findProjectByName } from "../lib/projectMenu";
 import type { Priority, Status, Task } from "../types";
 import { STATUSES } from "../types";
 
@@ -55,6 +58,9 @@ export default function BoardPage() {
   const [createStatus, setCreateStatus] = useState<Status | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  // Контекстное меню и создание проекта — транзиентный UI, в URL не живут.
+  const [menuFor, setMenuFor] = useState<{ task: Task; at: { x: number; y: number } } | null>(null);
+  const [creatingProjectFor, setCreatingProjectFor] = useState<Task | null>(null);
   const queryClient = useQueryClient();
 
   // Открытая задача и выбранная мобильная колонка живут в URL: ссылку на
@@ -139,6 +145,39 @@ export default function BoardPage() {
       }
     },
   });
+
+  const setProjectMutation = useMutation({
+    mutationFn: ({ id, projectId }: { id: number; projectId: number }) =>
+      api.patchTask(id, { project_id: projectId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+
+  /** Создать проект и сразу перенести в него задачу.
+   *
+   * 409 не показываем как ошибку: бэкенд сравнивает имена без учёта
+   * регистра, и пользователь, набравший существующее имя, хотел попасть в
+   * этот проект. Если после перезапроса имени в списке нет — проект в
+   * архиве, и вот об этом сказать надо. */
+  const createProjectAndMove = async (task: Task, name: string) => {
+    try {
+      const created = await api.createProject({ name });
+      await setProjectMutation.mutateAsync({ id: task.id, projectId: created.id });
+    } catch {
+      const fresh = await queryClient.fetchQuery({
+        queryKey: ["projects"],
+        queryFn: api.projects,
+      });
+      const existing = findProjectByName(fresh, name);
+      if (!existing) {
+        throw new Error(`Проект «${name}» есть в архиве — переименуйте или разархивируйте его`);
+      }
+      await setProjectMutation.mutateAsync({ id: task.id, projectId: existing.id });
+    }
+    setCreatingProjectFor(null);
+  };
 
   function setFilters(next: Filters) {
     // Мутируем текущие параметры, а не строим с нуля: иначе смена фильтра
@@ -313,6 +352,22 @@ export default function BoardPage() {
               </button>
             </div>
           )}
+          {setProjectMutation.isError && (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+              <span>
+                Не удалось сменить проект
+                {setProjectMutation.error instanceof Error
+                  ? `: ${setProjectMutation.error.message}`
+                  : ""}
+              </span>
+              <button
+                onClick={() => setProjectMutation.reset()}
+                className="rounded-md border border-danger/50 px-2.5 py-1 font-mono text-xs transition hover:bg-danger/15 active:bg-danger/25"
+              >
+                Понятно
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Мобильный переключатель колонок: одна колонка на экран.
@@ -380,6 +435,7 @@ export default function BoardPage() {
                   tasks={tasks.filter((t) => t.status === column.id)}
                   projects={projectMap}
                   onOpen={openTaskById}
+                  onContextMenu={(task, at) => setMenuFor({ task, at })}
                   onAdd={setCreateStatus}
                   activeOnMobile={column.id === mobileStatus}
                   clickGuard={suppressCardClick}
@@ -409,6 +465,25 @@ export default function BoardPage() {
           status={createStatus}
           projects={projects}
           onClose={() => setCreateStatus(null)}
+        />
+      )}
+      {menuFor && (
+        <TaskContextMenu
+          projects={projects}
+          currentProjectId={menuFor.task.project_id}
+          at={menuFor.at}
+          onPick={(projectId) => setProjectMutation.mutate({ id: menuFor.task.id, projectId })}
+          onCreateNew={() => {
+            setCreatingProjectFor(menuFor.task);
+            setMenuFor(null);
+          }}
+          onClose={() => setMenuFor(null)}
+        />
+      )}
+      {creatingProjectFor && (
+        <NewProjectModal
+          onCreate={(name) => createProjectAndMove(creatingProjectFor, name)}
+          onClose={() => setCreatingProjectFor(null)}
         />
       )}
     </div>

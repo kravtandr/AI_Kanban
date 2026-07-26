@@ -9,6 +9,7 @@ interface Props {
   tasks: Task[];
   projects: Map<number, Project>;
   onOpen: (task: Task) => void;
+  onContextMenu: (task: Task, at: { x: number; y: number }) => void;
   onAdd: (status: Status) => void;
   /** На мобильном видна одна колонка — выбранная в табах статусов. */
   activeOnMobile: boolean;
@@ -24,6 +25,7 @@ export default function Column({
   tasks,
   projects,
   onOpen,
+  onContextMenu,
   onAdd,
   activeOnMobile,
   clickGuard,
@@ -58,6 +60,7 @@ export default function Column({
             task={task}
             project={projects.get(task.project_id)}
             onOpen={onOpen}
+            onContextMenu={onContextMenu}
             clickGuard={clickGuard}
           />
         ))}
