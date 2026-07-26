@@ -147,6 +147,10 @@ def _openai_chat(system: str, user_message: str) -> tuple[str, int, int]:
                 {"role": "user", "content": user_message},
             ],
             "max_tokens": 4096,
+            # Категоризация должна быть детерминированной: без этого одна и та
+            # же заметка получала разные имена нового проекта (замер: 3-4
+            # варианта за 5 прогонов) и повторный черновик плодил дубликаты.
+            "temperature": 0,
         },
         timeout=settings.llm_timeout_seconds,
     )
