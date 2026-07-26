@@ -62,12 +62,14 @@ interface Props {
   task: Task;
   project: Project | undefined;
   onOpen: (task: Task) => void;
+  /** Вызов контекстного меню: правый клик, долгое нажатие или клавиша Menu. */
+  onContextMenu: (task: Task, at: { x: number; y: number }) => void;
   /** Пока true — игнорируем click: после drag браузер шлёт «сквозной»
    * click по исходной карточке, он не должен открывать модалку. */
   clickGuard: MutableRefObject<boolean>;
 }
 
-export default function TaskCard({ task, project, onOpen, clickGuard }: Props) {
+export default function TaskCard({ task, project, onOpen, onContextMenu, clickGuard }: Props) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `task-${task.id}`,
     data: { task },
@@ -82,6 +84,13 @@ export default function TaskCard({ task, project, onOpen, clickGuard }: Props) {
         if (clickGuard.current) return;
         onOpen(task);
       }}
+      onContextMenu={(e) => {
+        // Один обработчик на три жеста: правый клик, долгое нажатие на
+        // мобильном (Chromium и Safari шлют contextmenu) и клавиши
+        // Menu / Shift+F10 — клавиатурная доступность достаётся бесплатно.
+        e.preventDefault();
+        onContextMenu(task, { x: e.clientX, y: e.clientY });
+      }}
       onKeyDown={(e) => {
         // dnd-kit даёт карточке role=button и tabIndex, но Enter сам не обработает
         if (e.key === "Enter" || e.key === " ") {
@@ -89,7 +98,11 @@ export default function TaskCard({ task, project, onOpen, clickGuard }: Props) {
           onOpen(task);
         }
       }}
-      className={`cursor-grab touch-manipulation select-none ${isDragging ? "opacity-30" : ""}`}
+      // -webkit-touch-callout: иначе долгое нажатие в Safari поднимает
+      // нативную выноску поверх нашего меню. select-none уже есть.
+      className={`cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] ${
+        isDragging ? "opacity-30" : ""
+      }`}
     >
       <TaskCardView task={task} project={project} />
     </div>
