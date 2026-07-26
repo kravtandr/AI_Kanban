@@ -226,3 +226,37 @@ def test_backfill_never_touches_inbox(auth_client, monkeypatch):
     assert inbox["description"] == ""
 
     get_settings.cache_clear()
+
+
+def test_project_context_excludes_inbox(client):
+    """Inbox — fallback, а не вариант выбора: в индексе для LLM его быть не должно.
+
+    Пока он там был, слабая локальная модель выбирала его как единственный
+    знакомый вариант, и все задачи оседали в Inbox (см. спеку, раздел 3).
+    """
+    with db_module.get_session_factory()() as db:
+        context = ai_svc._project_context(db)
+    assert "Inbox" not in context
+    assert "Projects:\n(none yet)" in context
+
+
+def test_project_context_lists_real_projects_without_inbox(auth_client):
+    auth_client.post("/api/v1/projects", json={"name": "Сварог", "description": "Платформа Сварог"})
+    with db_module.get_session_factory()() as db:
+        context = ai_svc._project_context(db)
+    assert "- Сварог — Платформа Сварог" in context
+    assert "Inbox" not in context
+
+
+def test_project_context_marks_project_without_description(auth_client):
+    auth_client.post("/api/v1/projects", json={"name": "Дом"})
+    with db_module.get_session_factory()() as db:
+        context = ai_svc._project_context(db)
+    assert "- Дом (no description yet)" in context
+
+
+def test_system_prompt_forbids_catch_all_project_names():
+    """Правило A2: модель не должна отвечать именем fallback-корзины."""
+    assert "never" in ai_svc.SYSTEM_PROMPT
+    assert '"Inbox"' in ai_svc.SYSTEM_PROMPT
+    assert "transliteration" in ai_svc.SYSTEM_PROMPT

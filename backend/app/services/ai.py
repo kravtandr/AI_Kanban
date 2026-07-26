@@ -37,10 +37,17 @@ Rules:
 - Title: short, imperative, in the same language as the input.
 - Description: helpful Markdown; add a '- [ ]' checklist when the note implies several steps;
   keep it empty for trivial tasks. Do not invent requirements that are not implied.
-- Project: pick the best match from the provided project list, using each project's
-  description to route even vague or badly worded notes. If no existing project fits,
-  propose a NEW project: a short name (1-3 words, same language as the user's projects).
-  Return null only for one-off tasks that belong to no recognisable theme.
+- Project: route the note to one of the listed projects ONLY IF the note clearly falls
+  inside that project's stated scope — a shared technology or a vague topical overlap is
+  NOT enough. Reuse a listed project's exact name (copy the name only, never the
+  description) when the note refers to the same thing in another language or in
+  transliteration (e.g. a note about "Svarog" belongs to an existing "Сварог").
+  If no listed project clearly covers the note, you MUST propose a NEW project. Name it
+  after the product, system or domain the work belongs to — never after the task itself.
+  Use 1-3 words in the language of the note. The list never contains the fallback bucket,
+  so never answer "Inbox", "Разное", "Misc" or any similar catch-all name.
+  Return null ONLY for a one-off errand that belongs to no ongoing theme at all
+  (e.g. "buy milk", "call mum back").
 - project_description: one short sentence stating the project's scope, written so that
   future sloppily-worded notes can be matched to it. Required when proposing a new
   project; also provide it when the chosen existing project has no description yet.
@@ -188,16 +195,27 @@ def _sanitize_description(text: str | None) -> str:
 
 
 def _project_context(db: Session) -> str:
+    """Индекс проектов для категоризации (FR-2.1, FR-5.4).
+
+    Inbox в список НЕ попадает: он не вариант выбора, а fallback. «Тема не
+    распознана» модель выражает через project=null, который resolve_project_id
+    и так маппит в Inbox. Пока Inbox был в списке, слабая локальная модель
+    выбирала его как единственный знакомый вариант, и доска не наполнялась
+    проектами вообще.
+    """
     lines = []
     tag_vocab: set[str] = set()
     for project, _count in list_projects(db):
+        if project.is_inbox:
+            continue
         description = _sanitize_description(project.description)
         desc = f" — {description}" if description else " (no description yet)"
         lines.append(f"- {project.name}{desc}")
     for task in db.query(Task).filter(Task.deleted_at.is_(None)).limit(500):
         tag_vocab.update(task.tags or [])
     tags = ", ".join(sorted(tag_vocab)) or "(none yet)"
-    return "Projects:\n" + "\n".join(lines) + f"\n\nExisting tags: {tags}"
+    projects_block = "\n".join(lines) if lines else "(none yet)"
+    return f"Projects:\n{projects_block}\n\nExisting tags: {tags}"
 
 
 def draft_task(db: Session, text: str) -> DraftResult:
