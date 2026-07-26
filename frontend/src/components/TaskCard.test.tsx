@@ -74,4 +74,17 @@ describe("TaskCard", () => {
     await userEvent.click(screen.getByText("Сделать UI"));
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
+
+  it("не открывает модалку, если браузер прислал click вслед за contextmenu", async () => {
+    const onOpen = vi.fn();
+    render(<Harness onOpen={onOpen} onContextMenu={vi.fn()} />);
+    const card = screen.getByText("Сделать UI");
+
+    // Часть браузеров по долгому нажатию шлёт оба события. Без гашения
+    // пользователь получил бы модалку задачи под открытым меню.
+    await userEvent.pointer({ keys: "[MouseRight]", target: card });
+    await userEvent.click(card);
+
+    expect(onOpen).not.toHaveBeenCalled();
+  });
 });
