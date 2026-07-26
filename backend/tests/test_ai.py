@@ -260,3 +260,30 @@ def test_system_prompt_forbids_catch_all_project_names():
     assert "never" in ai_svc.SYSTEM_PROMPT
     assert '"Inbox"' in ai_svc.SYSTEM_PROMPT
     assert "transliteration" in ai_svc.SYSTEM_PROMPT
+
+
+def test_resolve_strips_description_glued_to_project_name(auth_client):
+    """Модель может скопировать строку индекса целиком, вместе с описанием.
+
+    Наблюдалось 2 раза из 5 на локальной модели. Без защиты это создаёт
+    проект-мусор с именем до 100 символов вместо попадания в существующий.
+    """
+    auth_client.post("/api/v1/projects", json={"name": "Сварог", "description": "Платформа Сварог"})
+    projects_before = len(auth_client.get("/api/v1/projects").json())
+
+    with db_module.get_session_factory()() as db:
+        expected = project_svc.find_project_by_name(db, "Сварог")
+        assert expected is not None
+        resolved = ai_svc.resolve_project_id(db, "Сварог — Платформа Сварог: бэкенд и деплой.")
+        assert resolved == expected.id
+
+    assert len(auth_client.get("/api/v1/projects").json()) == projects_before
+
+
+def test_resolve_keeps_dash_in_genuinely_new_project_name(auth_client):
+    """Тире внутри осмысленного имени не должно ломать создание проекта."""
+    with db_module.get_session_factory()() as db:
+        project_id = ai_svc.resolve_project_id(db, "Аудио-железо", "Усилители и колонки")
+        created = project_svc.find_project_by_name(db, "Аудио-железо")
+        assert created is not None
+        assert created.id == project_id

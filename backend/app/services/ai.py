@@ -273,6 +273,20 @@ AUTO_PROJECT_COLORS = [
 ]
 
 
+def _unglue_project_name(db: Session, name: str) -> str:
+    """Отклеить описание, если модель скопировала строку индекса целиком.
+
+    Индекс подаётся как «- Имя — описание», и модель иногда возвращает всю
+    строку (наблюдалось 2 раза из 5 на локальной модели). Отрезаем хвост
+    только если префикс до « — » совпал с существующим проектом: иначе тире
+    внутри осмысленного имени («Аудио-железо») пострадало бы зря.
+    """
+    prefix = name.split(" — ", 1)[0].strip()
+    if prefix != name and prefix and find_project_by_name(db, prefix) is not None:
+        return prefix
+    return name
+
+
 def resolve_project_id(
     db: Session, project_name: str | None, project_description: str | None = None
 ) -> int:
@@ -280,6 +294,7 @@ def resolve_project_id(
     project when it does not exist yet, backfill an empty description on the
     one it picked, fall back to Inbox otherwise."""
     name = (project_name or "").strip()[:100]
+    name = _unglue_project_name(db, name)
     if not name:
         return get_inbox(db).id
     description = _sanitize_description(project_description)
