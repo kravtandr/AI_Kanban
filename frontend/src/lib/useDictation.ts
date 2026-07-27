@@ -33,11 +33,28 @@ function pickMimeType(): string {
   return MIME_CANDIDATES.find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
 }
 
+/** MediaRecorder.stop() кидает InvalidStateError на уже остановленном
+ * рекордере. Дублирующий стоп прилетает и от 120-секундного таймера (тикает
+ * каждые 250мс и может не увидеть смену состояния), и от двойного тапа по
+ * кнопке — оба раза безопасно уходим в no-op. */
+function stopIfActive(recorder: MediaRecorder | null): void {
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+}
+
 export function useDictation(onText: (text: string) => void): Dictation {
   const [state, setState] = useState<DictationState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
+
+  // Защита от повторного входа в start(): пока getUserMedia в подвесе,
+  // публичный state всё ещё "idle", и обычный быстрый двойной тап толкнёт
+  // toggle() в start() второй раз. Флаг выставляется синхронно до первого
+  // await, поэтому второй вызов в тот же тик уже видит true.
+  const startingRef = useRef(false);
+  // Размонтирование могло случиться, пока getUserMedia ещё не ответил —
+  // recorderRef тогда пуст, и эффекту очистки нечего останавливать.
+  const unmountedRef = useRef(false);
 
   // onText пересоздаётся на каждом рендере потребителя. Держим его в ref,
   // иначе обработчики MediaRecorder замкнулись бы на устаревшую версию.
@@ -51,6 +68,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
   // гореть индикатор микрофона в браузере.
   useEffect(
     () => () => {
+      unmountedRef.current = true;
       recorderRef.current?.stream.getTracks().forEach((track) => track.stop());
       recorderRef.current = null;
     },
@@ -64,18 +82,29 @@ export function useDictation(onText: (text: string) => void): Dictation {
     const timer = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startedAt) / 1000);
       setSeconds(elapsed);
-      if (elapsed >= MAX_SECONDS) recorderRef.current?.stop();
+      if (elapsed >= MAX_SECONDS) stopIfActive(recorderRef.current);
     }, 250);
     return () => clearInterval(timer);
   }, [state]);
 
   const start = useCallback(async () => {
+    if (startingRef.current || recorderRef.current) return;
+    startingRef.current = true;
     setError(null);
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
       setError("Нет доступа к микрофону — разрешите в настройках браузера");
+      startingRef.current = false;
+      return;
+    }
+
+    if (unmountedRef.current) {
+      // Компонент исчез, пока пользователь решал в диалоге разрешений.
+      // Рекордер уже некому будет остановить — гасим поток сразу.
+      stream.getTracks().forEach((track) => track.stop());
+      startingRef.current = false;
       return;
     }
 
@@ -109,6 +138,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
 
     recorderRef.current = recorder;
     recorder.start();
+    startingRef.current = false;
     setState("recording");
   }, []);
 
@@ -118,7 +148,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
       return;
     }
     if (state === "transcribing") return; // повторный тап не должен рвать загрузку
-    if (state === "recording") recorderRef.current?.stop();
+    if (state === "recording") stopIfActive(recorderRef.current);
     else void start();
   }, [supported, state, start]);
 

@@ -1,11 +1,17 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
 import { useDictation } from "./useDictation";
 
 /** Управляемый двойник MediaRecorder: тест сам решает, когда придут данные
- * и когда запись остановится. */
+ * и когда запись остановится.
+ *
+ * Настоящий MediaRecorder меняет state на "inactive" синхронно внутри
+ * stop(), но событие stop (и, соответственно, вызов onstop) прилетает позже,
+ * отдельной задачей — и повторный stop() на уже неактивном рекордере кидает
+ * InvalidStateError. Двойник намеренно воспроизводит именно эту задержку:
+ * без неё баги двойного stop() и гонки с размонтированием непроверяемы. */
 class FakeMediaRecorder {
   static instances: FakeMediaRecorder[] = [];
   static isTypeSupported = () => true;
@@ -26,9 +32,14 @@ class FakeMediaRecorder {
   }
 
   stop() {
+    if (this.state === "inactive") {
+      throw new DOMException("The MediaRecorder is inactive", "InvalidStateError");
+    }
     this.state = "inactive";
-    this.ondataavailable?.({ data: new Blob(["audio"], { type: "audio/webm" }) });
-    this.onstop?.();
+    queueMicrotask(() => {
+      this.ondataavailable?.({ data: new Blob(["audio"], { type: "audio/webm" }) });
+      this.onstop?.();
+    });
   }
 }
 
@@ -144,5 +155,112 @@ describe("useDictation", () => {
 
     await userEvent.click(screen.getByRole("button"));
     expect(screen.getByTestId("error")).toHaveTextContent(/https/i);
+  });
+
+  it("два быстрых тапа во время ожидания разрешения создают только один рекордер", async () => {
+    let resolveGetUserMedia: (stream: MediaStream) => void = () => {};
+    const pending = new Promise<MediaStream>((resolve) => {
+      resolveGetUserMedia = resolve;
+    });
+    const getUserMedia = vi.fn(() => pending);
+    mockMedia(getUserMedia);
+    render(<Harness onText={vi.fn()} />);
+
+    const button = screen.getByRole("button");
+    // Без await: обе клика попадают в один и тот же синхронный тик, пока
+    // getUserMedia ещё не ответил — это и есть двойной тап.
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await act(async () => {
+      resolveGetUserMedia(fakeStream());
+      await pending;
+    });
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    expect(stopTrack).not.toHaveBeenCalled();
+    expect(screen.getByTestId("state")).toHaveTextContent("recording");
+  });
+
+  it("размонтирование во время ожидания разрешения гасит поток и не создаёт рекордер", async () => {
+    let resolveGetUserMedia: (stream: MediaStream) => void = () => {};
+    const pending = new Promise<MediaStream>((resolve) => {
+      resolveGetUserMedia = resolve;
+    });
+    mockMedia(() => pending);
+    const { unmount } = render(<Harness onText={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button"));
+    unmount();
+
+    await act(async () => {
+      resolveGetUserMedia(fakeStream());
+      await pending;
+    });
+
+    expect(stopTrack).toHaveBeenCalled();
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+  });
+
+  it("размонтирование во время записи гасит микрофон", async () => {
+    const { unmount } = render(<Harness onText={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button"));
+    expect(screen.getByTestId("state")).toHaveTextContent("recording");
+
+    unmount();
+
+    expect(stopTrack).toHaveBeenCalled();
+  });
+
+  it("останавливает запись саму через 120 секунд", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(api, "transcribe").mockResolvedValue({ text: "стоп по таймеру" });
+      render(<Harness onText={vi.fn()} />);
+
+      // fireEvent вместо userEvent: клик синхронный, не зависит от реальных
+      // таймеров user-event, которые под fake timers подвисают.
+      fireEvent.click(screen.getByRole("button"));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId("state")).toHaveTextContent("recording");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      expect(FakeMediaRecorder.instances[0].state).toBe("inactive");
+      expect(screen.getByTestId("state")).toHaveTextContent("idle");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("повторный стоп подряд не бросает исключение", async () => {
+    vi.spyOn(api, "transcribe").mockResolvedValue({ text: "ок" });
+    render(<Harness onText={vi.fn()} />);
+
+    const button = screen.getByRole("button");
+    await userEvent.click(button);
+    expect(screen.getByTestId("state")).toHaveTextContent("recording");
+
+    // Оба клика — в одном синхронном тике, как и настоящий двойной тап:
+    // первый останавливает рекордер, второй попадает на уже "inactive".
+    expect(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    }).not.toThrow();
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("state")).toHaveTextContent("idle");
   });
 });
