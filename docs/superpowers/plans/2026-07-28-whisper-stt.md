@@ -199,6 +199,9 @@ git commit -m "docs(adr): HTTPS в LAN (0006) и self-hosted Whisper для STT 
 ```python
 """STT service: proxy to a self-hosted Whisper (ADR-0007). Network is mocked."""
 
+# Каждый мок отдаёт Response с привязанным request: без него httpx роняет
+# raise_for_status() с RuntimeError, и тест падал бы не по той причине.
+
 import httpx
 import pytest
 
@@ -230,7 +233,7 @@ def test_transcribe_posts_audio_and_returns_text(monkeypatch):
         captured["files"] = kwargs["files"]
         captured["data"] = kwargs["data"]
         captured["timeout"] = kwargs["timeout"]
-        return httpx.Response(200, json={"text": "  купить молоко  "})
+        return httpx.Response(200, json={"text": "  купить молоко  "}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
@@ -247,7 +250,7 @@ def test_transcribe_strips_trailing_slash_in_base_url(monkeypatch):
 
     def fake_post(url, **kwargs):
         captured["url"] = url
-        return httpx.Response(200, json={"text": "ок"})
+        return httpx.Response(200, json={"text": "ок"}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
@@ -290,7 +293,7 @@ def test_transcribe_rejects_reply_without_text_field(monkeypatch):
     _configure(monkeypatch)
 
     def fake_post(url, **kwargs):
-        return httpx.Response(200, json={"unexpected": "shape"})
+        return httpx.Response(200, json={"unexpected": "shape"}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
@@ -303,7 +306,7 @@ def test_transcribe_allows_empty_text(monkeypatch):
     _configure(monkeypatch)
 
     def fake_post(url, **kwargs):
-        return httpx.Response(200, json={"text": ""})
+        return httpx.Response(200, json={"text": ""}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
