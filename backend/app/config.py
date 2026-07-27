@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str = ""
 
+    # Self-hosted Whisper for speech-to-text (ADR-0007). An empty base URL is the
+    # normal "STT disabled" state: the tracker must work without it, exactly as it
+    # already works without an LLM. Base URL without a trailing path, e.g.
+    # http://host.docker.internal:30558
+    whisper_base_url: str | None = None
+    whisper_language: str = "ru"
+    whisper_timeout_seconds: float = 60.0
+    whisper_max_audio_mb: float = 10.0
+
     # Optional static MCP token (bootstrap). DB tokens (kind=mcp) also work.
     mcp_token: str | None = None
 
