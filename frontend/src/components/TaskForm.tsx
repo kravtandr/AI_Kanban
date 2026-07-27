@@ -1,4 +1,6 @@
 import { useId, type Ref } from "react";
+import { useDictation } from "../lib/useDictation";
+import MicButton from "./MicButton";
 import type { Priority, Project, Status } from "../types";
 import { PRIORITIES, STATUSES } from "../types";
 
@@ -35,6 +37,12 @@ export default function TaskForm({
   const set = (patch: Partial<TaskFormValues>) => onChange({ ...values, ...patch });
   const errorId = useId();
 
+  // Диктовка дописывает текст к описанию, а не заменяет его: пользователь
+  // мог начать печатать до того, как взялся за микрофон.
+  const dictation = useDictation((text) =>
+    set({ description: values.description ? `${values.description.trimEnd()} ${text}` : text }),
+  );
+
   return (
     <div className="flex flex-col gap-3">
       <div>
@@ -59,16 +67,29 @@ export default function TaskForm({
           </span>
         )}
       </div>
-      <label className="block">
-        <span className="eyebrow">Описание · markdown</span>
+      <div>
+        <div className="flex items-end justify-between gap-2">
+          <span className="eyebrow">Описание · markdown</span>
+          <MicButton dictation={dictation} target="описание" compact />
+        </div>
         <textarea
           name="description"
+          aria-label="Описание"
           value={values.description}
           onChange={(e) => set({ description: e.target.value })}
           rows={5}
           className="input font-mono text-[13px]"
         />
-      </label>
+        <span aria-live="polite">
+          {dictation.error && <span className="field-error">{dictation.error}</span>}
+          {!dictation.error && dictation.state === "recording" && (
+            <span className="font-mono text-[11px] text-dim">запись… {dictation.seconds}с</span>
+          )}
+          {dictation.state === "transcribing" && (
+            <span className="font-mono text-[11px] text-dim">распознаю…</span>
+          )}
+        </span>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <label className="block">
           <span className="eyebrow">Проект</span>
