@@ -9,6 +9,30 @@ import { afterEach } from "vitest";
 // начинают находить по несколько совпадений.
 afterEach(cleanup);
 
+// jsdom не реализует PointerEvent. Без него fireEvent.pointerDown создаёт
+// generic Event и молча теряет pointerType с координатами — тесты жестов
+// «проходили» бы, ничего не проверяя. Подменяем наследником MouseEvent,
+// который эти поля доносит.
+// Обращаемся через globalThis, а не через window: проверка `"PointerEvent" in
+// window` сузила бы тип window до never и уронила typecheck.
+const dom = globalThis as unknown as {
+  MouseEvent: typeof MouseEvent;
+  PointerEvent?: unknown;
+};
+if (typeof window !== "undefined" && dom.PointerEvent === undefined) {
+  class PointerEventPolyfill extends dom.MouseEvent {
+    readonly pointerId: number;
+    readonly pointerType: string;
+
+    constructor(type: string, params: PointerEventInit = {}) {
+      super(type, params);
+      this.pointerId = params.pointerId ?? 0;
+      this.pointerType = params.pointerType ?? "";
+    }
+  }
+  dom.PointerEvent = PointerEventPolyfill;
+}
+
 // jsdom не реализует matchMedia, а компоненты по нему решают, ставить ли
 // автофокус на десктопе (Modal, LoginPage). Отвечаем «не десктоп»: это
 // консервативнее — тест, зависящий от автофокуса, обязан выставить его сам.

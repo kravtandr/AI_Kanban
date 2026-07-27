@@ -71,6 +71,13 @@ interface Props {
 
 /** Сколько миллисекунд после contextmenu игнорировать click по карточке. */
 const CONTEXT_MENU_CLICK_GRACE_MS = 500;
+/** Удержание, после которого считаем жест долгим нажатием. */
+const LONG_PRESS_MS = 500;
+/** Сдвиг, после которого жест — перетаскивание, а не удержание.
+ * Совпадает с activationConstraint у PointerSensor в BoardPage: меню и drag
+ * должны расходиться по одному и тому же порогу, иначе появится зазор, где
+ * срабатывает и то и другое. */
+const LONG_PRESS_MOVE_TOLERANCE_PX = 8;
 
 export default function TaskCard({ task, project, onOpen, onContextMenu, clickGuard }: Props) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -81,22 +88,59 @@ export default function TaskCard({ task, project, onOpen, onContextMenu, clickGu
   // гашения пользователь получал бы модалку задачи под открытым меню.
   // Метка времени, а не флаг: зависший флаг съел бы следующий честный click.
   const contextMenuAt = useRef(0);
+  // iOS Safari по долгому нажатию не шлёт contextmenu вообще — там этого
+  // события нет. Поэтому на тач-устройствах распознаём жест сами.
+  const longPress = useRef<{ timer: number; x: number; y: number } | null>(null);
+
+  const cancelLongPress = () => {
+    if (!longPress.current) return;
+    clearTimeout(longPress.current.timer);
+    longPress.current = null;
+  };
 
   return (
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
+      onPointerDown={(e) => {
+        // listeners от dnd-kit содержат свой onPointerDown, и объявленный
+        // ниже проп его перекрывает. Вызываем вручную, иначе перетаскивание
+        // перестанет запускаться.
+        listeners?.onPointerDown?.(e);
+        // Мышь обслуживает настоящий contextmenu — таймер ей не нужен.
+        if (e.pointerType === "mouse") return;
+        cancelLongPress();
+        const { clientX: x, clientY: y } = e;
+        longPress.current = {
+          x,
+          y,
+          timer: window.setTimeout(() => {
+            longPress.current = null;
+            contextMenuAt.current = Date.now();
+            onContextMenu(task, { x, y });
+          }, LONG_PRESS_MS),
+        };
+      }}
+      onPointerMove={(e) => {
+        const pressed = longPress.current;
+        if (!pressed) return;
+        if (Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) > LONG_PRESS_MOVE_TOLERANCE_PX)
+          cancelLongPress();
+      }}
+      onPointerUp={cancelLongPress}
+      onPointerCancel={cancelLongPress}
       onClick={() => {
         if (clickGuard.current) return;
         if (Date.now() - contextMenuAt.current < CONTEXT_MENU_CLICK_GRACE_MS) return;
         onOpen(task);
       }}
       onContextMenu={(e) => {
-        // Один обработчик на три жеста: правый клик, долгое нажатие на
-        // мобильном (Chromium и Safari шлют contextmenu) и клавиши
-        // Menu / Shift+F10 — клавиатурная доступность достаётся бесплатно.
+        // Правый клик, клавиши Menu / Shift+F10 (клавиатурная доступность
+        // достаётся бесплатно) и долгое нажатие в Chromium на Android.
+        // iOS Safari сюда не приходит — его обслуживает таймер выше.
         e.preventDefault();
+        cancelLongPress();
         contextMenuAt.current = Date.now();
         onContextMenu(task, { x: e.clientX, y: e.clientY });
       }}
