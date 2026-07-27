@@ -108,36 +108,53 @@ export function useDictation(onText: (text: string) => void): Dictation {
       return;
     }
 
+    // Конструктор MediaRecorder может бросить NotSupportedError, даже если
+    // isTypeSupported() перед этим вернул true (известная особенность
+    // некоторых браузеров), а start() — если трек оборвался между ответом
+    // getUserMedia и этим местом (устройство отключили, разрешение отозвали
+    // на лету). Оба случая гасим одинаково: отпускаем уже захваченный поток,
+    // снимаем флаг "идёт запуск" и показываем ошибку — иначе startingRef
+    // остался бы true навсегда, и кнопка микрофона умерла бы молча.
     const mimeType = pickMimeType();
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     const chunks: Blob[] = [];
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
 
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunks.push(event.data);
-    };
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
 
-    recorder.onstop = async () => {
-      stream.getTracks().forEach((track) => track.stop());
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        recorderRef.current = null;
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size === 0) {
+          setState("idle");
+          return;
+        }
+        setState("transcribing");
+        try {
+          const { text } = await api.transcribe(blob);
+          if (text) onTextRef.current(text);
+          else setError("Ничего не распознано");
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Не удалось распознать речь");
+        } finally {
+          setState("idle");
+        }
+      };
+
+      recorderRef.current = recorder;
+      recorder.start();
+    } catch {
       recorderRef.current = null;
-      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-      if (blob.size === 0) {
-        setState("idle");
-        return;
-      }
-      setState("transcribing");
-      try {
-        const { text } = await api.transcribe(blob);
-        if (text) onTextRef.current(text);
-        else setError("Ничего не распознано");
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Не удалось распознать речь");
-      } finally {
-        setState("idle");
-      }
-    };
+      stream.getTracks().forEach((track) => track.stop());
+      startingRef.current = false;
+      setError("Не удалось начать запись — попробуйте ещё раз");
+      return;
+    }
 
-    recorderRef.current = recorder;
-    recorder.start();
     startingRef.current = false;
     setState("recording");
   }, []);

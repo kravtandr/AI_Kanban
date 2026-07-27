@@ -15,6 +15,10 @@ import { useDictation } from "./useDictation";
 class FakeMediaRecorder {
   static instances: FakeMediaRecorder[] = [];
   static isTypeSupported = () => true;
+  // Управляют исключениями из конструктора и start() для проверки
+  // exception-safety — по умолчанию выключены, не влияют на прочие тесты.
+  static throwOnConstruct = false;
+  static throwOnStart = false;
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
   mimeType = "audio/webm";
@@ -24,10 +28,16 @@ class FakeMediaRecorder {
     public stream: MediaStream,
     public options?: { mimeType?: string },
   ) {
+    if (FakeMediaRecorder.throwOnConstruct) {
+      throw new DOMException("mimeType не поддерживается", "NotSupportedError");
+    }
     FakeMediaRecorder.instances.push(this);
   }
 
   start() {
+    if (FakeMediaRecorder.throwOnStart) {
+      throw new DOMException("трек уже остановлен", "InvalidStateError");
+    }
     this.state = "recording";
   }
 
@@ -71,6 +81,9 @@ function Harness({ onText }: { onText: (text: string) => void }) {
 
 beforeEach(() => {
   FakeMediaRecorder.instances = [];
+  FakeMediaRecorder.isTypeSupported = () => true;
+  FakeMediaRecorder.throwOnConstruct = false;
+  FakeMediaRecorder.throwOnStart = false;
   stopTrack.mockClear();
   mockMedia(() => Promise.resolve(fakeStream()));
 });
@@ -262,5 +275,59 @@ describe("useDictation", () => {
     });
 
     expect(screen.getByTestId("state")).toHaveTextContent("idle");
+  });
+
+  it("конструктор MediaRecorder бросает исключение — отпускает поток и не блокирует повторный запуск", async () => {
+    FakeMediaRecorder.throwOnConstruct = true;
+    render(<Harness onText={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByTestId("error")).toHaveTextContent(/не удалось начать запись/i);
+    expect(stopTrack).toHaveBeenCalled();
+    expect(screen.getByTestId("state")).toHaveTextContent("idle");
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+
+    // Флаг "идёт запуск" должен быть снят — иначе toggle() тут просто
+    // вернулся бы, ничего не сделав, и кнопка осталась бы мёртвой.
+    FakeMediaRecorder.throwOnConstruct = false;
+    await userEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByTestId("state")).toHaveTextContent("recording");
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+  });
+
+  it("recorder.start() бросает исключение — отпускает поток и не блокирует повторный запуск", async () => {
+    FakeMediaRecorder.throwOnStart = true;
+    render(<Harness onText={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByTestId("error")).toHaveTextContent(/не удалось начать запись/i);
+    expect(stopTrack).toHaveBeenCalled();
+    expect(screen.getByTestId("state")).toHaveTextContent("idle");
+
+    // Как и выше — startingRef и recorderRef должны быть сброшены, иначе
+    // повторный тап по кнопке молча не сработает.
+    FakeMediaRecorder.throwOnStart = false;
+    await userEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByTestId("state")).toHaveTextContent("recording");
+  });
+
+  it("pickMimeType() отдаёт пустую строку, когда ни один тип не поддерживается", async () => {
+    const original = FakeMediaRecorder.isTypeSupported;
+    FakeMediaRecorder.isTypeSupported = () => false;
+    try {
+      render(<Harness onText={vi.fn()} />);
+
+      await userEvent.click(screen.getByRole("button"));
+
+      expect(screen.getByTestId("state")).toHaveTextContent("recording");
+      // mimeType не выбран — конструктору передан undefined вместо { mimeType }.
+      expect(FakeMediaRecorder.instances[0].options).toBeUndefined();
+    } finally {
+      FakeMediaRecorder.isTypeSupported = original;
+    }
   });
 });
