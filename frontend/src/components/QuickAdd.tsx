@@ -1,11 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
 import { formatDue } from "../lib/dates";
-import { getSpeechRecognition, type SpeechRecognitionLike } from "../lib/speech";
+import { useDictation } from "../lib/useDictation";
 import type { Project } from "../types";
 import { PRIORITIES } from "../types";
+import MicButton from "./MicButton";
 import Modal from "./Modal";
 import TaskForm, { parseTags, type TaskFormValues } from "./TaskForm";
 
@@ -68,26 +69,22 @@ function restoreItems(): DraftItem[] {
  * шапке, на мобильном прибита к низу экрана (зона большого пальца).
  * Enter отправляет текст модели и сразу освобождает ввод; черновики
  * копятся в лотке и одобряются по одному или пачкой. Микрофон диктует
- * в то же поле (Web Speech API, ru-RU) — есть только в браузерах с API. */
+ * в то же поле: запись уходит на собственный Whisper (ADR-0007). */
 export default function QuickAdd({ projects }: Props) {
   const [text, setText] = useState("");
   const [items, setItems] = useState<DraftItem[]>(restoreItems);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [listening, setListening] = useState(false);
-  const [interim, setInterim] = useState("");
-  const [micError, setMicError] = useState<string | null>(null);
   const [confirmDiscardId, setConfirmDiscardId] = useState<number | null>(null);
   const [draftTitleError, setDraftTitleError] = useState<string | null>(null);
   const nextId = useRef(items.reduce((max, it) => Math.max(max, it.id), 0) + 1);
   const inputRef = useRef<HTMLInputElement>(null);
   const draftTitleRef = useRef<HTMLInputElement>(null);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  // Индекс последнего применённого финального сегмента диктовки
-  const finalIndexRef = useRef(0);
   const queryClient = useQueryClient();
 
-  // Ленивая инициализация: window трогаем только на клиенте внутри компонента
-  const speechCtor = useMemo(() => getSpeechRecognition(), []);
+  // Расшифровка дописывается к тому, что уже набрано руками
+  const dictation = useDictation((text) =>
+    setText((prev) => (prev ? `${prev.trimEnd()} ${text}` : text)),
+  );
 
   // Актуальная очередь для асинхронных циклов (createAll):
   // state-снапшот в замыкании устаревает, ref — нет.
@@ -134,15 +131,6 @@ export default function QuickAdd({ projects }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  useEffect(() => () => recognitionRef.current?.stop(), []);
-
-  // Подсказка о запрете микрофона не должна висеть вечно
-  useEffect(() => {
-    if (!micError) return;
-    const timer = setTimeout(() => setMicError(null), 6000);
-    return () => clearTimeout(timer);
-  }, [micError]);
-
   const inboxId = projects.find((p) => p.is_inbox)?.id ?? projects[0]?.id ?? 0;
   const projectsReady = projects.length > 0;
 
@@ -178,62 +166,6 @@ export default function QuickAdd({ projects }: Props) {
     }
     setConfirmDiscardId(null);
     setItems((prev) => prev.filter((it) => it.id !== id));
-  }
-
-  function toggleDictation() {
-    if (!speechCtor) return;
-    if (listening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-    setMicError(null);
-    setInterim("");
-    finalIndexRef.current = 0;
-    const recognition = new speechCtor();
-    recognition.lang = "ru-RU";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      // Применяем только финальные сегменты — функциональным setText,
-      // чтобы ручные правки во время диктовки не затирались снапшотом
-      let interimText = "";
-      for (let i = finalIndexRef.current; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalIndexRef.current = i + 1;
-          const segment = result[0]?.transcript.trim();
-          if (segment) {
-            setText((prev) => (prev ? `${prev.trimEnd()} ${segment}` : segment));
-          }
-        } else {
-          interimText += result[0]?.transcript ?? "";
-        }
-      }
-      setInterim(interimText);
-    };
-    recognition.onend = () => {
-      setListening(false);
-      setInterim("");
-    };
-    recognition.onerror = (event) => {
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        setMicError("Нет доступа к микрофону — разрешите в настройках браузера");
-      }
-      setListening(false);
-      setInterim("");
-    };
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-      setListening(true);
-    } catch {
-      // start() бросает, если распознавание уже идёт или API сломан —
-      // не оставляем «залипший» индикатор записи
-      setListening(false);
-      recognitionRef.current = null;
-      return;
-    }
-    inputRef.current?.focus();
   }
 
   async function submitText(event: React.FormEvent) {
@@ -361,18 +293,18 @@ export default function QuickAdd({ projects }: Props) {
             {/* aria-live только на ошибке: промежуточный транскрипт меняется
               на каждом слове и превратил бы скринридер в скороговорку. */}
             <div aria-live="polite">
-              {micError && (
+              {dictation.error && (
                 <span className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-danger shadow-xl">
-                  {micError}
+                  {dictation.error}
                 </span>
               )}
             </div>
-            {!micError && listening && interim && (
+            {!dictation.error && dictation.state === "recording" && (
               <span
                 aria-hidden="true"
                 className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-dim italic shadow-xl"
               >
-                …{interim}
+                запись… {dictation.seconds}с
               </span>
             )}
           </div>
@@ -391,30 +323,7 @@ export default function QuickAdd({ projects }: Props) {
             className="input h-11 pl-8 font-mono text-[13px] md:h-10"
           />
         </div>
-        {speechCtor && (
-          <button
-            type="button"
-            onClick={toggleDictation}
-            aria-label={listening ? "Остановить диктовку" : "Надиктовать задачу"}
-            title={listening ? "Остановить диктовку" : "Надиктовать задачу"}
-            className={`btn-icon h-11 w-11 md:h-10 md:w-10 ${listening ? "mic-live" : ""}`}
-          >
-            <svg
-              aria-hidden="true"
-              width="17"
-              height="17"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
-              <rect x="9" y="2" width="6" height="12" rx="3" />
-              <path d="M5 10a7 7 0 0 0 14 0" />
-              <line x1="12" y1="19" x2="12" y2="22" />
-            </svg>
-          </button>
-        )}
+        <MicButton dictation={dictation} target="задачу" />
         <button
           type="submit"
           disabled={!text.trim() || !projectsReady}
