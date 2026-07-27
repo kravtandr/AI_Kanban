@@ -111,3 +111,82 @@ def test_transcribe_allows_empty_text(monkeypatch):
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
     assert stt_svc.transcribe(b"a", "audio.webm", "audio/webm") == ""
+
+
+def _audio_file(size: int = 32) -> dict:
+    return {"file": ("audio.webm", b"\x00" * size, "audio/webm")}
+
+
+def test_transcribe_endpoint_requires_auth(client):
+    response = client.post("/api/v1/ai/transcribe", files=_audio_file())
+    assert response.status_code == 401
+
+
+def test_transcribe_endpoint_returns_text(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(stt_svc, "transcribe", lambda *args: "купить молоко")
+
+    response = auth_client.post("/api/v1/ai/transcribe", files=_audio_file())
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"text": "купить молоко"}
+
+
+def test_transcribe_endpoint_passes_filename_and_content_type(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    captured: dict = {}
+
+    def fake_transcribe(audio: bytes, filename: str, content_type: str) -> str:
+        captured.update(audio=audio, filename=filename, content_type=content_type)
+        return "ок"
+
+    monkeypatch.setattr(stt_svc, "transcribe", fake_transcribe)
+
+    auth_client.post("/api/v1/ai/transcribe", files={"file": ("audio.mp4", b"abc", "audio/mp4")})
+
+    assert captured == {"audio": b"abc", "filename": "audio.mp4", "content_type": "audio/mp4"}
+
+
+def test_transcribe_endpoint_503_when_disabled(auth_client, monkeypatch):
+    monkeypatch.setenv("WHISPER_BASE_URL", "")
+    get_settings.cache_clear()
+
+    response = auth_client.post("/api/v1/ai/transcribe", files=_audio_file())
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "stt_disabled"
+
+
+def test_transcribe_endpoint_413_when_audio_too_large(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setenv("WHISPER_MAX_AUDIO_MB", "0.001")  # 1048 bytes
+    get_settings.cache_clear()
+
+    response = auth_client.post("/api/v1/ai/transcribe", files=_audio_file(size=4096))
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "audio_too_large"
+
+
+def test_transcribe_endpoint_502_on_upstream_failure(auth_client, monkeypatch):
+    _configure(monkeypatch)
+
+    def boom(*args):
+        raise stt_svc.SttError("speech recognition service is unavailable")
+
+    monkeypatch.setattr(stt_svc, "transcribe", boom)
+
+    response = auth_client.post("/api/v1/ai/transcribe", files=_audio_file())
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "stt_upstream"
+
+
+def test_transcribe_endpoint_returns_empty_text_for_silence(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(stt_svc, "transcribe", lambda *args: "")
+
+    response = auth_client.post("/api/v1/ai/transcribe", files=_audio_file())
+
+    assert response.status_code == 200
+    assert response.json() == {"text": ""}
