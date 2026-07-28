@@ -43,6 +43,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    environment:
+      TT_HTTPS_ADDR: ${TT_HTTPS_ADDR:-https://localhost}
     ports:
       - "80:80"
       - "443:443"

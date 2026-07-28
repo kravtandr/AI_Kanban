@@ -11,3 +11,25 @@
 	encode gzip
 	reverse_proxy app:8000
 }
+
+# HTTPS в LAN (ADR-0006). Нужен не ради шифрования, а ради secure context:
+# без него браузер не отдаёт микрофон (getUserMedia) — то есть не работает
+# диктовка. Адрес host-специфичный, поэтому приходит из окружения:
+# TT_HTTPS_ADDR=https://192.168.1.55:27183
+#
+# Сертификат выпускает внутренний CA Caddy; его корень лежит в томе caddy_data
+# (/data/caddy/pki/authorities/local/root.crt) и ставится на устройства.
+#
+# Этот путь идёт мимо фронтящего nginx, поэтому ACL по адресам LAN повторён
+# здесь: наружу по-прежнему не открыто ничего (ADR-0004).
+{$TT_HTTPS_ADDR:https://localhost} {
+	tls internal
+	encode gzip
+	@lan remote_ip 127.0.0.0/8 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12
+	handle @lan {
+		reverse_proxy app:8000
+	}
+	handle {
+		abort
+	}
+}
