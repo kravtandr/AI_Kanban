@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { useState } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "../types";
 import TaskForm, { parseTags, type TaskFormValues } from "./TaskForm";
 
@@ -44,6 +45,12 @@ const VALUES: TaskFormValues = {
 };
 
 describe("TaskForm — диктовка описания", () => {
+  beforeEach(() => {
+    mockDictation.state = "idle";
+    mockDictation.error = null;
+    mockDictation.seconds = 0;
+  });
+
   it("расшифровка дописывается в описание", async () => {
     const onChange = vi.fn();
     render(<TaskForm values={VALUES} projects={PROJECTS} onChange={onChange} />);
@@ -72,6 +79,38 @@ describe("TaskForm — диктовка описания", () => {
     );
   });
 
+  it("расшифровка после описания из одних пробелов не оставляет пробел в начале", () => {
+    const onChange = vi.fn();
+    render(
+      <TaskForm
+        values={{ ...VALUES, description: "   " }}
+        projects={PROJECTS}
+        onChange={onChange}
+      />,
+    );
+
+    onTextRef.current("Текст.");
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ description: "Текст." }));
+  });
+
+  it("после ручного ввода описания диктовка дописывает поверх набранного текста", async () => {
+    function ControlledTaskForm() {
+      const [values, setValues] = useState(VALUES);
+      return <TaskForm values={values} projects={PROJECTS} onChange={setValues} />;
+    }
+
+    render(<ControlledTaskForm />);
+
+    const textarea = screen.getByLabelText("Описание · markdown");
+    await userEvent.type(textarea, "Начало.");
+    expect(textarea).toHaveValue("Начало.");
+
+    onTextRef.current("Продолжение.");
+
+    expect(await screen.findByDisplayValue("Начало. Продолжение.")).toBeInTheDocument();
+  });
+
   it("кнопка микрофона запускает диктовку", async () => {
     render(<TaskForm values={VALUES} projects={PROJECTS} onChange={vi.fn()} />);
 
@@ -82,5 +121,39 @@ describe("TaskForm — диктовка описания", () => {
 
   it("parseTags остаётся прежним", () => {
     expect(parseTags(" Infra, HOME ,, ")).toEqual(["infra", "home"]);
+  });
+});
+
+describe("TaskForm — aria-live индикатора диктовки", () => {
+  beforeEach(() => {
+    mockDictation.state = "idle";
+    mockDictation.error = null;
+    mockDictation.seconds = 0;
+  });
+
+  it("счётчик записи не объявляется через aria-live и скрыт от скринридера", () => {
+    mockDictation.state = "recording";
+    mockDictation.seconds = 5;
+    const { container } = render(
+      <TaskForm values={VALUES} projects={PROJECTS} onChange={vi.fn()} />,
+    );
+
+    const liveRegion = container.querySelector('[aria-live="polite"]');
+    expect(liveRegion).not.toBeNull();
+    expect(liveRegion).toBeEmptyDOMElement();
+
+    const counter = screen.getByText(/запись… 5с/);
+    expect(counter).toHaveAttribute("aria-hidden", "true");
+    expect(liveRegion?.contains(counter)).toBe(false);
+  });
+
+  it("ошибка диктовки объявляется через aria-live", () => {
+    mockDictation.error = "Не удалось распознать речь";
+    const { container } = render(
+      <TaskForm values={VALUES} projects={PROJECTS} onChange={vi.fn()} />,
+    );
+
+    const liveRegion = container.querySelector('[aria-live="polite"]');
+    expect(liveRegion).toHaveTextContent("Не удалось распознать речь");
   });
 });

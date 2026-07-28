@@ -40,7 +40,11 @@ export default function TaskForm({
   // Диктовка дописывает текст к описанию, а не заменяет его: пользователь
   // мог начать печатать до того, как взялся за микрофон.
   const dictation = useDictation((text) =>
-    set({ description: values.description ? `${values.description.trimEnd()} ${text}` : text }),
+    set({
+      description: values.description.trim()
+        ? `${values.description.trimEnd()} ${text}`
+        : text,
+    }),
   );
 
   return (
@@ -74,21 +78,28 @@ export default function TaskForm({
         </div>
         <textarea
           name="description"
-          aria-label="Описание"
+          aria-label="Описание · markdown"
           value={values.description}
           onChange={(e) => set({ description: e.target.value })}
           rows={5}
           className="input font-mono text-[13px]"
         />
+        {/* aria-live только на ошибке: счётчик записи тикает каждую секунду
+          до 120с и, будучи внутри live-региона, зачитывался бы повторно всё
+          это время — счётчик и «распознаю…» поэтому скрыты от скринридера. */}
         <span aria-live="polite">
           {dictation.error && <span className="field-error">{dictation.error}</span>}
-          {!dictation.error && dictation.state === "recording" && (
-            <span className="font-mono text-[11px] text-dim">запись… {dictation.seconds}с</span>
-          )}
-          {dictation.state === "transcribing" && (
-            <span className="font-mono text-[11px] text-dim">распознаю…</span>
-          )}
         </span>
+        {!dictation.error && dictation.state === "recording" && (
+          <span aria-hidden="true" className="font-mono text-[11px] text-dim">
+            запись… {dictation.seconds}с
+          </span>
+        )}
+        {dictation.state === "transcribing" && (
+          <span aria-hidden="true" className="font-mono text-[11px] text-dim">
+            распознаю…
+          </span>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-3">
         <label className="block">

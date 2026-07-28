@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Project } from "../types";
 import QuickAdd from "./QuickAdd";
 
+const onTextRef = vi.hoisted(() => ({ current: (_: string) => {} }));
 const mockDictation = vi.hoisted(() => ({
   supported: true,
   state: "idle" as "idle" | "recording" | "transcribing",
@@ -15,7 +16,10 @@ const mockDictation = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/useDictation", () => ({
-  useDictation: () => mockDictation,
+  useDictation: (onText: (text: string) => void) => {
+    onTextRef.current = onText;
+    return mockDictation;
+  },
   recordingSupported: () => mockDictation.supported,
 }));
 
@@ -61,5 +65,19 @@ describe("QuickAdd — диктовка", () => {
     renderWithQuery(<QuickAdd projects={PROJECTS} />);
 
     expect(screen.getByText(/требует https/i)).toBeInTheDocument();
+  });
+
+  it("расшифровка дописывается к уже набранному тексту, а не заменяет его", async () => {
+    mockDictation.state = "idle";
+    mockDictation.error = null;
+    renderWithQuery(<QuickAdd projects={PROJECTS} />);
+
+    const input = screen.getByLabelText("Быстрое добавление задачи");
+    await userEvent.type(input, "Начало.");
+    expect(input).toHaveValue("Начало.");
+
+    onTextRef.current("Продолжение.");
+
+    expect(await screen.findByDisplayValue("Начало. Продолжение.")).toBeInTheDocument();
   });
 });

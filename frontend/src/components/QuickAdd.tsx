@@ -290,8 +290,9 @@ export default function QuickAdd({ projects }: Props) {
             ›
           </span>
           <div className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 w-full">
-            {/* aria-live только на ошибке: промежуточный транскрипт меняется
-              на каждом слове и превратил бы скринридер в скороговорку. */}
+            {/* aria-live только на ошибке: счётчик записи тикает каждую секунду
+              до 120с и, будучи внутри live-региона, зачитывался бы повторно
+              всё это время — поэтому он снаружи и помечен aria-hidden. */}
             <div aria-live="polite">
               {dictation.error && (
                 <span className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-danger shadow-xl">
