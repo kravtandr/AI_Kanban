@@ -8,9 +8,20 @@ export interface Dictation {
   supported: boolean;
   state: DictationState;
   error: string | null;
+  /** Информационное сообщение вне канала ошибок (например, «ничего не
+   * распознано» — тишина это не сбой). Рендерится тем же приглушённым
+   * стилем, что и счётчик записи. */
+  notice: string | null;
   /** Длительность текущей записи для индикатора. */
   seconds: number;
   toggle: () => void;
+}
+
+/** Дописывает расшифровку к уже набранному тексту. Общая для QuickAdd и
+ * TaskForm: пустое поле или поле из одних пробелов не должно оставлять
+ * пробел перед вставленным текстом. */
+export function appendTranscript(existing: string, transcript: string): string {
+  return existing.trim() ? `${existing.trimEnd()} ${transcript}` : transcript;
 }
 
 /** Предел одной записи. Ограничивает и размер загрузки (бэкенд режет на
@@ -21,7 +32,7 @@ const MAX_SECONDS = 120;
  * ffmpeg. Пустая строка — пусть браузер выберет сам. */
 const MIME_CANDIDATES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
 
-export function recordingSupported(): boolean {
+function recordingSupported(): boolean {
   return (
     typeof window !== "undefined" &&
     typeof window.MediaRecorder !== "undefined" &&
@@ -44,6 +55,7 @@ function stopIfActive(recorder: MediaRecorder | null): void {
 export function useDictation(onText: (text: string) => void): Dictation {
   const [state, setState] = useState<DictationState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
 
@@ -66,14 +78,20 @@ export function useDictation(onText: (text: string) => void): Dictation {
 
   // Размонтирование во время записи (закрыли модалку) не должно оставлять
   // гореть индикатор микрофона в браузере.
-  useEffect(
-    () => () => {
+  //
+  // Сброс в начале тела эффекта обязателен: React 18 StrictMode в dev
+  // монтирует эффекты дважды (setup → cleanup → setup), и без сброса
+  // unmountedRef застрял бы в true после первого прохода — start() тогда
+  // всегда уходил бы в ветку «компонент размонтирован» и диктовка была бы
+  // мертва весь dev-сеанс, хотя в проде такой двойной прогон не происходит.
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
       unmountedRef.current = true;
       recorderRef.current?.stream.getTracks().forEach((track) => track.stop());
       recorderRef.current = null;
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     if (state !== "recording") return;
@@ -91,6 +109,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
     if (startingRef.current || recorderRef.current) return;
     startingRef.current = true;
     setError(null);
+    setNotice(null);
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -137,7 +156,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
         try {
           const { text } = await api.transcribe(blob);
           if (text) onTextRef.current(text);
-          else setError("Ничего не распознано");
+          else setNotice("Ничего не распознано");
         } catch (err) {
           setError(err instanceof Error ? err.message : "Не удалось распознать речь");
         } finally {
@@ -169,5 +188,5 @@ export function useDictation(onText: (text: string) => void): Dictation {
     else void start();
   }, [supported, state, start]);
 
-  return { supported, state, error, seconds, toggle };
+  return { supported, state, error, notice, seconds, toggle };
 }

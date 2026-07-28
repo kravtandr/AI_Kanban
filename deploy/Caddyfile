@@ -6,6 +6,15 @@
 # internal CA with LAN-only ACLs. When using HTTPS, set COOKIE_SECURE=true
 # in .env so session cookies are marked Secure. See DEPLOYMENT.md for setup.
 #
+# `auto_https disable_redirects` is required: without it, Caddy's automatic
+# HTTPS installs an HTTP→HTTPS redirect for the TT_HTTPS_ADDR host onto the
+# shared :80 listener, ahead of the `:80` site block below — silently
+# hijacking it. That breaks the plain-HTTP entry point the MCP agents depend
+# on (a request to :80 gets a 308 instead of reaching the app). Keep this
+# directive even if it looks like dead weight.
+{
+	auto_https disable_redirects
+}
 
 :80 {
 	encode gzip

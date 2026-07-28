@@ -18,6 +18,10 @@ export default function MicButton({ dictation, target, compact = false }: Props)
       : dictation.state === "transcribing"
         ? "Распознаю речь"
         : `Надиктовать ${target}`;
+  // На HTTP-странице кнопка остаётся включённой (см. класс-комментарий
+  // выше), но причина отказа должна быть видна по наведению, а не только
+  // после тапа — иначе транспортная проблема выглядит как отсутствие фичи.
+  const title = dictation.supported ? label : `${label} — диктовка требует HTTPS`;
 
   return (
     <button
@@ -25,7 +29,7 @@ export default function MicButton({ dictation, target, compact = false }: Props)
       onClick={dictation.toggle}
       disabled={dictation.state === "transcribing"}
       aria-label={label}
-      title={label}
+      title={title}
       className={`btn-icon disabled:opacity-40 ${
         compact ? "h-8 w-8" : "h-11 w-11 md:h-10 md:w-10"
       } ${dictation.state === "recording" ? "mic-live" : ""}`}

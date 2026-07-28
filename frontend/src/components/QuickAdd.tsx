@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
 import { formatDue } from "../lib/dates";
-import { useDictation } from "../lib/useDictation";
+import { appendTranscript, useDictation } from "../lib/useDictation";
 import type { Project } from "../types";
 import { PRIORITIES } from "../types";
 import MicButton from "./MicButton";
@@ -82,9 +82,7 @@ export default function QuickAdd({ projects }: Props) {
   const queryClient = useQueryClient();
 
   // Расшифровка дописывается к тому, что уже набрано руками
-  const dictation = useDictation((text) =>
-    setText((prev) => (prev ? `${prev.trimEnd()} ${text}` : text)),
-  );
+  const dictation = useDictation((text) => setText((prev) => appendTranscript(prev, text)));
 
   // Актуальная очередь для асинхронных циклов (createAll):
   // state-снапшот в замыкании устаревает, ref — нет.
@@ -292,7 +290,8 @@ export default function QuickAdd({ projects }: Props) {
           <div className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 w-full">
             {/* aria-live только на ошибке: счётчик записи тикает каждую секунду
               до 120с и, будучи внутри live-региона, зачитывался бы повторно
-              всё это время — поэтому он снаружи и помечен aria-hidden. */}
+              всё это время — поэтому счётчик, «распознаю…» и notice снаружи
+              и помечены aria-hidden. */}
             <div aria-live="polite">
               {dictation.error && (
                 <span className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-danger shadow-xl">
@@ -306,6 +305,22 @@ export default function QuickAdd({ projects }: Props) {
                 className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-dim italic shadow-xl"
               >
                 запись… {dictation.seconds}с
+              </span>
+            )}
+            {dictation.state === "transcribing" && (
+              <span
+                aria-hidden="true"
+                className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-dim italic shadow-xl"
+              >
+                распознаю…
+              </span>
+            )}
+            {!dictation.error && dictation.notice && (
+              <span
+                aria-hidden="true"
+                className="block max-w-full truncate rounded-md border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-dim italic shadow-xl"
+              >
+                {dictation.notice}
               </span>
             )}
           </div>

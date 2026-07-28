@@ -1,5 +1,5 @@
 import { useId, type Ref } from "react";
-import { useDictation } from "../lib/useDictation";
+import { appendTranscript, useDictation } from "../lib/useDictation";
 import MicButton from "./MicButton";
 import type { Priority, Project, Status } from "../types";
 import { PRIORITIES, STATUSES } from "../types";
@@ -40,11 +40,7 @@ export default function TaskForm({
   // Диктовка дописывает текст к описанию, а не заменяет его: пользователь
   // мог начать печатать до того, как взялся за микрофон.
   const dictation = useDictation((text) =>
-    set({
-      description: values.description.trim()
-        ? `${values.description.trimEnd()} ${text}`
-        : text,
-    }),
+    set({ description: appendTranscript(values.description, text) }),
   );
 
   return (
@@ -86,7 +82,8 @@ export default function TaskForm({
         />
         {/* aria-live только на ошибке: счётчик записи тикает каждую секунду
           до 120с и, будучи внутри live-региона, зачитывался бы повторно всё
-          это время — счётчик и «распознаю…» поэтому скрыты от скринридера. */}
+          это время — счётчик, «распознаю…» и notice поэтому скрыты от
+          скринридера. */}
         <span aria-live="polite">
           {dictation.error && <span className="field-error">{dictation.error}</span>}
         </span>
@@ -98,6 +95,11 @@ export default function TaskForm({
         {dictation.state === "transcribing" && (
           <span aria-hidden="true" className="font-mono text-[11px] text-dim">
             распознаю…
+          </span>
+        )}
+        {!dictation.error && dictation.notice && (
+          <span aria-hidden="true" className="font-mono text-[11px] text-dim">
+            {dictation.notice}
           </span>
         )}
       </div>

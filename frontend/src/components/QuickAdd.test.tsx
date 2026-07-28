@@ -11,17 +11,21 @@ const mockDictation = vi.hoisted(() => ({
   supported: true,
   state: "idle" as "idle" | "recording" | "transcribing",
   error: null as string | null,
+  notice: null as string | null,
   seconds: 0,
   toggle: vi.fn(),
 }));
 
-vi.mock("../lib/useDictation", () => ({
-  useDictation: (onText: (text: string) => void) => {
-    onTextRef.current = onText;
-    return mockDictation;
-  },
-  recordingSupported: () => mockDictation.supported,
-}));
+vi.mock("../lib/useDictation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/useDictation")>();
+  return {
+    ...actual,
+    useDictation: (onText: (text: string) => void) => {
+      onTextRef.current = onText;
+      return mockDictation;
+    },
+  };
+});
 
 const PROJECTS: Project[] = [
   {
@@ -44,6 +48,7 @@ describe("QuickAdd — диктовка", () => {
   it("кнопка микрофона запускает диктовку", async () => {
     mockDictation.state = "idle";
     mockDictation.error = null;
+    mockDictation.notice = null;
     renderWithQuery(<QuickAdd projects={PROJECTS} />);
 
     await userEvent.click(screen.getByRole("button", { name: /надиктовать/i }));
@@ -54,6 +59,7 @@ describe("QuickAdd — диктовка", () => {
   it("во время расшифровки кнопка недоступна", () => {
     mockDictation.state = "transcribing";
     mockDictation.error = null;
+    mockDictation.notice = null;
     renderWithQuery(<QuickAdd projects={PROJECTS} />);
 
     expect(screen.getByRole("button", { name: /распознаю/i })).toBeDisabled();
@@ -62,6 +68,7 @@ describe("QuickAdd — диктовка", () => {
   it("ошибка диктовки видна пользователю", () => {
     mockDictation.state = "idle";
     mockDictation.error = "Диктовка требует HTTPS — откройте трекер по https://";
+    mockDictation.notice = null;
     renderWithQuery(<QuickAdd projects={PROJECTS} />);
 
     expect(screen.getByText(/требует https/i)).toBeInTheDocument();
@@ -70,6 +77,7 @@ describe("QuickAdd — диктовка", () => {
   it("расшифровка дописывается к уже набранному тексту, а не заменяет его", async () => {
     mockDictation.state = "idle";
     mockDictation.error = null;
+    mockDictation.notice = null;
     renderWithQuery(<QuickAdd projects={PROJECTS} />);
 
     const input = screen.getByLabelText("Быстрое добавление задачи");
@@ -79,5 +87,26 @@ describe("QuickAdd — диктовка", () => {
     onTextRef.current("Продолжение.");
 
     expect(await screen.findByDisplayValue("Начало. Продолжение.")).toBeInTheDocument();
+  });
+
+  it("во время расшифровки показывает подсказку «распознаю…»", () => {
+    mockDictation.state = "transcribing";
+    mockDictation.error = null;
+    mockDictation.notice = null;
+    renderWithQuery(<QuickAdd projects={PROJECTS} />);
+
+    expect(screen.getByText(/распознаю…/i)).toBeInTheDocument();
+  });
+
+  it("notice о тишине показывается приглушённым стилем, а не как ошибка", () => {
+    mockDictation.state = "idle";
+    mockDictation.error = null;
+    mockDictation.notice = "Ничего не распознано";
+    renderWithQuery(<QuickAdd projects={PROJECTS} />);
+
+    const notice = screen.getByText("Ничего не распознано");
+    expect(notice).toHaveAttribute("aria-hidden", "true");
+    expect(notice.className).toContain("text-dim");
+    expect(notice.className).not.toContain("text-danger");
   });
 });

@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import { useDictation } from "./useDictation";
+import { appendTranscript, useDictation } from "./useDictation";
 
 /** Управляемый двойник MediaRecorder: тест сам решает, когда придут данные
  * и когда запись остановится.
@@ -75,6 +76,7 @@ function Harness({ onText }: { onText: (text: string) => void }) {
       <span data-testid="state">{d.state}</span>
       <span data-testid="supported">{String(d.supported)}</span>
       <span data-testid="error">{d.error ?? ""}</span>
+      <span data-testid="notice">{d.notice ?? ""}</span>
     </div>
   );
 }
@@ -146,7 +148,7 @@ describe("useDictation", () => {
     expect(screen.getByTestId("state")).toHaveTextContent("idle");
   });
 
-  it("сообщает о тишине вместо вставки пустой строки", async () => {
+  it("сообщает о тишине через notice, а не error, и не вставляет пустую строку", async () => {
     vi.spyOn(api, "transcribe").mockResolvedValue({ text: "" });
     const onText = vi.fn();
     render(<Harness onText={onText} />);
@@ -157,7 +159,8 @@ describe("useDictation", () => {
     });
 
     expect(onText).not.toHaveBeenCalled();
-    expect(screen.getByTestId("error")).toHaveTextContent(/не распознано/i);
+    expect(screen.getByTestId("notice")).toHaveTextContent(/не распознано/i);
+    expect(screen.getByTestId("error")).toHaveTextContent("");
   });
 
   it("без API записи не поддерживается и объясняет причину", async () => {
@@ -329,5 +332,44 @@ describe("useDictation", () => {
     } finally {
       FakeMediaRecorder.isTypeSupported = original;
     }
+  });
+
+  it("работает под React.StrictMode: unmountedRef не залипает в true после двойного mount/unmount эффекта в dev", async () => {
+    // Регрессия: unmountedRef выставлялся один раз в cleanup и никогда не
+    // сбрасывался, поэтому двойной setup→cleanup→setup, который
+    // StrictMode гоняет в dev, оставлял его в true навсегда — start()
+    // после этого всегда уходил в ветку "компонент размонтирован".
+    // render() из Testing Library не оборачивает в StrictMode сам по себе,
+    // поэтому оборачиваем явно.
+    vi.spyOn(api, "transcribe").mockResolvedValue({ text: "готово" });
+    const onText = vi.fn();
+    render(
+      <StrictMode>
+        <Harness onText={onText} />
+      </StrictMode>,
+    );
+
+    await userEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByTestId("state")).toHaveTextContent("recording");
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+  });
+});
+
+describe("appendTranscript", () => {
+  it("дописывает к непустому тексту через пробел", () => {
+    expect(appendTranscript("Начало.", "Продолжение.")).toBe("Начало. Продолжение.");
+  });
+
+  it("для пустой строки возвращает расшифровку как есть", () => {
+    expect(appendTranscript("", "Текст.")).toBe("Текст.");
+  });
+
+  it("для строки из одних пробелов не оставляет пробел перед расшифровкой", () => {
+    expect(appendTranscript("   ", "Текст.")).toBe("Текст.");
+  });
+
+  it("обрезает висящий пробел в конце существующего текста перед склейкой", () => {
+    expect(appendTranscript("Начало.   ", "Продолжение.")).toBe("Начало. Продолжение.");
   });
 });

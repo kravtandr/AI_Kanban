@@ -10,17 +10,21 @@ const mockDictation = vi.hoisted(() => ({
   supported: true,
   state: "idle" as "idle" | "recording" | "transcribing",
   error: null as string | null,
+  notice: null as string | null,
   seconds: 0,
   toggle: vi.fn(),
 }));
 
-vi.mock("../lib/useDictation", () => ({
-  useDictation: (onText: (text: string) => void) => {
-    onTextRef.current = onText;
-    return mockDictation;
-  },
-  recordingSupported: () => mockDictation.supported,
-}));
+vi.mock("../lib/useDictation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/useDictation")>();
+  return {
+    ...actual,
+    useDictation: (onText: (text: string) => void) => {
+      onTextRef.current = onText;
+      return mockDictation;
+    },
+  };
+});
 
 const PROJECTS: Project[] = [
   {
@@ -48,6 +52,7 @@ describe("TaskForm — диктовка описания", () => {
   beforeEach(() => {
     mockDictation.state = "idle";
     mockDictation.error = null;
+    mockDictation.notice = null;
     mockDictation.seconds = 0;
   });
 
@@ -128,6 +133,7 @@ describe("TaskForm — aria-live индикатора диктовки", () => {
   beforeEach(() => {
     mockDictation.state = "idle";
     mockDictation.error = null;
+    mockDictation.notice = null;
     mockDictation.seconds = 0;
   });
 
@@ -149,11 +155,26 @@ describe("TaskForm — aria-live индикатора диктовки", () => {
 
   it("ошибка диктовки объявляется через aria-live", () => {
     mockDictation.error = "Не удалось распознать речь";
+    mockDictation.notice = null;
     const { container } = render(
       <TaskForm values={VALUES} projects={PROJECTS} onChange={vi.fn()} />,
     );
 
     const liveRegion = container.querySelector('[aria-live="polite"]');
     expect(liveRegion).toHaveTextContent("Не удалось распознать речь");
+  });
+
+  it("notice о тишине скрыт от скринридера и не выглядит как ошибка", () => {
+    mockDictation.notice = "Ничего не распознано";
+    const { container } = render(
+      <TaskForm values={VALUES} projects={PROJECTS} onChange={vi.fn()} />,
+    );
+
+    const liveRegion = container.querySelector('[aria-live="polite"]');
+    expect(liveRegion).toBeEmptyDOMElement();
+
+    const notice = screen.getByText("Ничего не распознано");
+    expect(notice).toHaveAttribute("aria-hidden", "true");
+    expect(notice.className).not.toContain("field-error");
   });
 });

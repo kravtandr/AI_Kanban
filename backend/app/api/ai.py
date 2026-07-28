@@ -53,7 +53,12 @@ def enhance(task_id: int, db: Session = Depends(get_db)):
 
 
 # Read the upload in chunks: Content-Length is client-controlled and must not be
-# trusted as a size guard.
+# trusted as a size guard. Note this bounds only what we copy into memory and
+# forward to Whisper — by the time this handler runs, FastAPI has already
+# fully parsed and spooled the multipart body (Starlette's
+# SpooledTemporaryFile, threshold 1 MB) during dependency resolution. This
+# loop does not protect the server from oversized uploads; it only limits
+# what gets sent upstream.
 _CHUNK_BYTES = 64 * 1024
 
 

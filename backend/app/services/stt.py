@@ -5,8 +5,12 @@ backend keeps the request same-origin (CSP allows `connect-src 'self'` only),
 reuses the session cookie for authorization, and keeps the service address on
 the server side. The upstream API is OpenAI-compatible.
 
-Audio is never written to disk: it lives only in the memory of the handling
-request.
+Audio is never written to disk deliberately: this module only ever holds it
+in memory. However, Starlette backs the incoming upload with a
+SpooledTemporaryFile (threshold 1 MB), so an upload larger than that spills
+to a real temp file in the container before this module ever sees it; that
+file is removed when the request completes. Audio is never persisted on
+purpose and never outlives the request in any form.
 """
 
 import logging
@@ -52,6 +56,10 @@ def transcribe(audio: bytes, filename: str, content_type: str) -> str:
 
     text = payload.get("text") if isinstance(payload, dict) else None
     if not isinstance(text, str):
-        log.warning("STT reply has no text field: %r", payload)
+        # Log only the shape, never the content: the payload may carry
+        # recognised speech, and this is the one place in the flow that
+        # otherwise never persists it.
+        keys = list(payload.keys()) if isinstance(payload, dict) else None
+        log.warning("STT reply has no text field: type=%s keys=%r", type(payload).__name__, keys)
         raise SttError("speech recognition service returned no text")
     return text.strip()
