@@ -1,4 +1,6 @@
 import { useId, type Ref } from "react";
+import { appendTranscript, useDictation } from "../lib/useDictation";
+import MicButton from "./MicButton";
 import type { Priority, Project, Status } from "../types";
 import { PRIORITIES, STATUSES } from "../types";
 
@@ -35,6 +37,12 @@ export default function TaskForm({
   const set = (patch: Partial<TaskFormValues>) => onChange({ ...values, ...patch });
   const errorId = useId();
 
+  // Диктовка дописывает текст к описанию, а не заменяет его: пользователь
+  // мог начать печатать до того, как взялся за микрофон.
+  const dictation = useDictation((text) =>
+    set({ description: appendTranscript(values.description, text) }),
+  );
+
   return (
     <div className="flex flex-col gap-3">
       <div>
@@ -59,16 +67,42 @@ export default function TaskForm({
           </span>
         )}
       </div>
-      <label className="block">
-        <span className="eyebrow">Описание · markdown</span>
+      <div>
+        <div className="flex items-end justify-between gap-2">
+          <span className="eyebrow">Описание · markdown</span>
+          <MicButton dictation={dictation} target="описание" compact />
+        </div>
         <textarea
           name="description"
+          aria-label="Описание · markdown"
           value={values.description}
           onChange={(e) => set({ description: e.target.value })}
           rows={5}
           className="input font-mono text-[13px]"
         />
-      </label>
+        {/* aria-live только на ошибке: счётчик записи тикает каждую секунду
+          до 120с и, будучи внутри live-региона, зачитывался бы повторно всё
+          это время — счётчик, «распознаю…» и notice поэтому скрыты от
+          скринридера. */}
+        <span aria-live="polite">
+          {dictation.error && <span className="field-error">{dictation.error}</span>}
+        </span>
+        {!dictation.error && dictation.state === "recording" && (
+          <span aria-hidden="true" className="font-mono text-[11px] text-dim">
+            запись… {dictation.seconds}с
+          </span>
+        )}
+        {dictation.state === "transcribing" && (
+          <span aria-hidden="true" className="font-mono text-[11px] text-dim">
+            распознаю…
+          </span>
+        )}
+        {!dictation.error && dictation.notice && (
+          <span aria-hidden="true" className="font-mono text-[11px] text-dim">
+            {dictation.notice}
+          </span>
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <label className="block">
           <span className="eyebrow">Проект</span>

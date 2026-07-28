@@ -32,6 +32,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       MCP_TOKEN: ${MCP_TOKEN:-}
+      WHISPER_BASE_URL: ${WHISPER_BASE_URL:-}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      WHISPER_TIMEOUT_SECONDS: ${WHISPER_TIMEOUT_SECONDS:-60}
+      WHISPER_MAX_AUDIO_MB: ${WHISPER_MAX_AUDIO_MB:-10}
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,6 +43,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    environment:
+      TT_HTTPS_ADDR: ${TT_HTTPS_ADDR:-https://localhost}
     ports:
       - "80:80"
       - "443:443"

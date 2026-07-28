@@ -14,6 +14,7 @@ os.environ["OPENAI_MODEL"] = ""
 os.environ["MCP_TOKEN"] = ""
 os.environ["ADMIN_USERNAME"] = ""
 os.environ["ADMIN_PASSWORD"] = ""
+os.environ["WHISPER_BASE_URL"] = ""
 
 from app import db as db_module  # noqa: E402
 from app.config import get_settings  # noqa: E402

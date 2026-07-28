@@ -11,9 +11,12 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // Content-Type для FormData обязан выставлять браузер: ему нужно
+  // дописать boundary, которого у нас нет.
+  const isForm = options.body instanceof FormData;
   const response = await fetch(`${BASE}${path}`, {
     credentials: "same-origin",
-    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    headers: options.body && !isForm ? { "Content-Type": "application/json" } : undefined,
     ...options,
   });
   if (response.status === 401 && !window.location.pathname.startsWith("/login")) {
@@ -58,4 +61,10 @@ export const api = {
     request<DraftResponse>("/ai/draft", { method: "POST", body: JSON.stringify({ text }) }),
   enhance: (taskId: number) =>
     request<DraftResponse>(`/ai/enhance/${taskId}`, { method: "POST" }),
+  transcribe: (blob: Blob) => {
+    const form = new FormData();
+    // Имя файла нужно Whisper для выбора декодера: Safari отдаёт mp4, Chrome — webm.
+    form.append("file", blob, blob.type.includes("mp4") ? "audio.mp4" : "audio.webm");
+    return request<{ text: string }>("/ai/transcribe", { method: "POST", body: form });
+  },
 };

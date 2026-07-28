@@ -126,3 +126,9 @@ class DraftOut(BaseModel):
     project_id: int
     ai_ok: bool
     ai_error: str | None = None
+
+
+class TranscriptionOut(BaseModel):
+    """Recognised speech. An empty string is a valid result (silence)."""
+
+    text: str

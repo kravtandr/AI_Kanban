@@ -199,6 +199,9 @@ git commit -m "docs(adr): HTTPS в LAN (0006) и self-hosted Whisper для STT 
 ```python
 """STT service: proxy to a self-hosted Whisper (ADR-0007). Network is mocked."""
 
+# Каждый мок отдаёт Response с привязанным request: без него httpx роняет
+# raise_for_status() с RuntimeError, и тест падал бы не по той причине.
+
 import httpx
 import pytest
 
@@ -230,7 +233,7 @@ def test_transcribe_posts_audio_and_returns_text(monkeypatch):
         captured["files"] = kwargs["files"]
         captured["data"] = kwargs["data"]
         captured["timeout"] = kwargs["timeout"]
-        return httpx.Response(200, json={"text": "  купить молоко  "})
+        return httpx.Response(200, json={"text": "  купить молоко  "}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
@@ -247,7 +250,7 @@ def test_transcribe_strips_trailing_slash_in_base_url(monkeypatch):
 
     def fake_post(url, **kwargs):
         captured["url"] = url
-        return httpx.Response(200, json={"text": "ок"})
+        return httpx.Response(200, json={"text": "ок"}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
@@ -290,7 +293,7 @@ def test_transcribe_rejects_reply_without_text_field(monkeypatch):
     _configure(monkeypatch)
 
     def fake_post(url, **kwargs):
-        return httpx.Response(200, json={"unexpected": "shape"})
+        return httpx.Response(200, json={"unexpected": "shape"}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
@@ -303,7 +306,7 @@ def test_transcribe_allows_empty_text(monkeypatch):
     _configure(monkeypatch)
 
     def fake_post(url, **kwargs):
-        return httpx.Response(200, json={"text": ""})
+        return httpx.Response(200, json={"text": ""}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(stt_svc.httpx, "post", fake_post)
 
@@ -1034,12 +1037,14 @@ git commit -m "feat(ui): хук диктовки на MediaRecorder и загр�
 
 **Files:**
 - Delete: `frontend/src/lib/speech.ts`
+- Create: `frontend/src/components/MicButton.tsx`
 - Modify: `frontend/src/components/QuickAdd.tsx`
 - Test: `frontend/src/components/QuickAdd.test.tsx` (создаётся)
 
 **Interfaces:**
-- Consumes: `useDictation` из задачи 4.
-- Produces: ничего для последующих задач.
+- Consumes: `useDictation` и тип `Dictation` из задачи 4.
+- Produces: `MicButton` — компонент кнопки микрофона, props
+  `{ dictation: Dictation; target: string; compact?: boolean }`. Задача 6 его переиспользует.
 
 - [ ] **Step 1: Написать падающий тест компонента**
 
@@ -1118,7 +1123,65 @@ describe("QuickAdd — диктовка", () => {
 Run: `cd frontend && npx vitest run src/components/QuickAdd.test.tsx`
 Expected: FAIL — `vi.mock` ссылается на несуществующий `../lib/useDictation`, либо кнопка не найдена
 
-- [ ] **Step 3: Заменить движок диктовки в QuickAdd**
+- [ ] **Step 3: Создать общую кнопку микрофона**
+
+Кнопка нужна в двух местах (здесь и в `TaskForm`, задача 6) с одинаковой логикой
+состояний и подписей, поэтому она сразу выносится в отдельный компонент. Создать
+`frontend/src/components/MicButton.tsx`:
+
+```tsx
+import type { Dictation } from "../lib/useDictation";
+
+interface Props {
+  dictation: Dictation;
+  /** Что диктуем — попадает в подпись: «Надиктовать задачу», «Надиктовать описание». */
+  target: string;
+  /** Компактный вариант для поля формы; по умолчанию — размер командной строки. */
+  compact?: boolean;
+}
+
+/** Кнопка диктовки. Состояние и переключение приходят от useDictation —
+ * компонент только рисует. Недоступность записи он не скрывает: причину
+ * объясняет подсказка рядом, а не молчаливо отсутствующая кнопка. */
+export default function MicButton({ dictation, target, compact = false }: Props) {
+  const label =
+    dictation.state === "recording"
+      ? "Остановить диктовку"
+      : dictation.state === "transcribing"
+        ? "Распознаю речь"
+        : `Надиктовать ${target}`;
+
+  return (
+    <button
+      type="button"
+      onClick={dictation.toggle}
+      disabled={dictation.state === "transcribing"}
+      aria-label={label}
+      title={label}
+      className={`btn-icon disabled:opacity-40 ${
+        compact ? "h-8 w-8" : "h-11 w-11 md:h-10 md:w-10"
+      } ${dictation.state === "recording" ? "mic-live" : ""}`}
+    >
+      <svg
+        aria-hidden="true"
+        width={compact ? 15 : 17}
+        height={compact ? 15 : 17}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      >
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M5 10a7 7 0 0 0 14 0" />
+        <line x1="12" y1="19" x2="12" y2="22" />
+      </svg>
+    </button>
+  );
+}
+```
+
+- [ ] **Step 4: Заменить движок диктовки в QuickAdd**
 
 В `frontend/src/components/QuickAdd.tsx`:
 
@@ -1188,46 +1251,16 @@ import { useDictation } from "../lib/useDictation";
             )}
 ```
 
-5. Заменить условно отрисовываемую кнопку микрофона (`{speechCtor && (<button …>)}`) на безусловную — причину недоступности теперь объясняет подсказка, а не молчаливое отсутствие кнопки:
+5. Заменить условно отрисовываемую кнопку микрофона (`{speechCtor && (<button …>)}`) вместе со всей её разметкой на компонент из шага 3 — безусловный, потому что причину недоступности теперь объясняет подсказка, а не молчаливое отсутствие кнопки:
 
 ```tsx
-        <button
-          type="button"
-          onClick={dictation.toggle}
-          disabled={dictation.state === "transcribing"}
-          aria-label={
-            dictation.state === "recording"
-              ? "Остановить диктовку"
-              : dictation.state === "transcribing"
-                ? "Распознаю речь"
-                : "Надиктовать задачу"
-          }
-          title={
-            dictation.state === "recording"
-              ? "Остановить диктовку"
-              : dictation.state === "transcribing"
-                ? "Распознаю речь"
-                : "Надиктовать задачу"
-          }
-          className={`btn-icon h-11 w-11 md:h-10 md:w-10 disabled:opacity-40 ${
-            dictation.state === "recording" ? "mic-live" : ""
-          }`}
-        >
-          <svg
-            aria-hidden="true"
-            width="17"
-            height="17"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <rect x="9" y="2" width="6" height="12" rx="3" />
-            <path d="M5 10a7 7 0 0 0 14 0" />
-            <line x1="12" y1="19" x2="12" y2="22" />
-          </svg>
-        </button>
+        <MicButton dictation={dictation} target="задачу" />
+```
+
+и добавить его импорт:
+
+```ts
+import MicButton from "./MicButton";
 ```
 
 6. Обновить комментарий-заголовок компонента: заменить предложение
@@ -1246,31 +1279,31 @@ import { useDictation } from "../lib/useDictation";
 
 7. Проверить импорт `useMemo` из `react`: если после удаления `speechCtor` он больше нигде в файле не используется, убрать его из списка импортов.
 
-- [ ] **Step 4: Удалить обёртку над Web Speech API**
+- [ ] **Step 5: Удалить обёртку над Web Speech API**
 
 ```bash
 git rm frontend/src/lib/speech.ts
 ```
 
-- [ ] **Step 5: Убедиться, что на Web Speech API не осталось ссылок**
+- [ ] **Step 6: Убедиться, что на Web Speech API не осталось ссылок**
 
 Run: `grep -rn "SpeechRecognition\|lib/speech" frontend/src/`
 Expected: пустой вывод
 
-- [ ] **Step 6: Запустить тесты и убедиться, что они проходят**
+- [ ] **Step 7: Запустить тесты и убедиться, что они проходят**
 
 Run: `cd frontend && npx vitest run`
 Expected: PASS, все файлы тестов зелёные
 
-- [ ] **Step 7: Проверить типы**
+- [ ] **Step 8: Проверить типы**
 
 Run: `cd frontend && npx tsc -b --noEmit`
 Expected: exit 0
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add frontend/src/components/QuickAdd.tsx frontend/src/components/QuickAdd.test.tsx frontend/src/lib/speech.ts
+git add frontend/src/components/QuickAdd.tsx frontend/src/components/MicButton.tsx frontend/src/components/QuickAdd.test.tsx frontend/src/lib/speech.ts
 git commit -m "feat(ui): диктовка в QuickAdd через Whisper вместо Web Speech API"
 ```
 
@@ -1285,7 +1318,8 @@ git commit -m "feat(ui): диктовка в QuickAdd через Whisper вме�
 - Test: `frontend/src/components/TaskForm.test.tsx` (создаётся)
 
 **Interfaces:**
-- Consumes: `useDictation` из задачи 4; существующий проп `onChange(values: TaskFormValues)`.
+- Consumes: `useDictation` из задачи 4; `MicButton` из задачи 5 (props
+  `{ dictation, target, compact }`); существующий проп `onChange(values: TaskFormValues)`.
 - Produces: ничего для последующих задач.
 
 - [ ] **Step 1: Написать падающий тест**
@@ -1394,6 +1428,7 @@ Expected: FAIL — кнопка `надиктовать описание` не �
 
 ```ts
 import { useDictation } from "../lib/useDictation";
+import MicButton from "./MicButton";
 ```
 
 2. После строки `const errorId = useId();` вставить:
@@ -1412,36 +1447,7 @@ import { useDictation } from "../lib/useDictation";
       <div>
         <div className="flex items-end justify-between gap-2">
           <span className="eyebrow">Описание · markdown</span>
-          <button
-            type="button"
-            onClick={dictation.toggle}
-            disabled={dictation.state === "transcribing"}
-            aria-label={
-              dictation.state === "recording"
-                ? "Остановить диктовку описания"
-                : dictation.state === "transcribing"
-                  ? "Распознаю речь"
-                  : "Надиктовать описание"
-            }
-            className={`btn-icon h-8 w-8 disabled:opacity-40 ${
-              dictation.state === "recording" ? "mic-live" : ""
-            }`}
-          >
-            <svg
-              aria-hidden="true"
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
-              <rect x="9" y="2" width="6" height="12" rx="3" />
-              <path d="M5 10a7 7 0 0 0 14 0" />
-              <line x1="12" y1="19" x2="12" y2="22" />
-            </svg>
-          </button>
+          <MicButton dictation={dictation} target="описание" compact />
         </div>
         <textarea
           name="description"
