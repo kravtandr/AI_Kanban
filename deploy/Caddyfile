@@ -1,11 +1,11 @@
 # TaskTracker — LAN-only reverse proxy (ADR-0004: no external exposure).
 #
-# Default: plain HTTP on port 80 inside the trusted home network.
-# To switch to HTTPS with Caddy's internal CA, replace `:80` with your
-# LAN hostname (e.g. `tracker.lan`) and add `tls internal` inside the block;
-# then trust Caddy's root CA on your devices.
-# When enabling `tls internal`, also set COOKIE_SECURE=true in .env so the
-# session cookie is marked Secure (and HSTS is emitted).
+# Two entry points: plain HTTP on :80 for MCP agent authentication (Bearer token),
+# and HTTPS for browsers via TT_HTTPS_ADDR (ADR-0006: secure context for
+# microphone access). The `:80` block must remain as-is. HTTPS uses Caddy's
+# internal CA with LAN-only ACLs. When using HTTPS, set COOKIE_SECURE=true
+# in .env so session cookies are marked Secure. See DEPLOYMENT.md for setup.
+#
 
 :80 {
 	encode gzip
