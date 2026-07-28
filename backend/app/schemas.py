@@ -19,7 +19,7 @@ class UserOut(BaseModel):
 
 class ProjectIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    color: str = "#6b7280"
+    color: str | None = None
     description: str = ""
 
 

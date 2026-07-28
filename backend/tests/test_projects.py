@@ -1,3 +1,10 @@
+from sqlalchemy import select
+
+from app import db as db_module
+from app.models import Project
+from app.services import projects as project_svc
+
+
 def test_inbox_exists(auth_client):
     projects = auth_client.get("/api/v1/projects").json()
     assert any(p["is_inbox"] for p in projects)
@@ -7,6 +14,47 @@ def test_create_and_duplicate(auth_client):
     response = auth_client.post("/api/v1/projects", json={"name": "Homelab", "color": "#22c55e"})
     assert response.status_code == 201
     assert auth_client.post("/api/v1/projects", json={"name": "homelab"}).status_code == 409
+
+
+def test_automatic_project_colors_are_distinct(auth_client):
+    first = auth_client.post("/api/v1/projects", json={"name": "First"}).json()
+    second = auth_client.post("/api/v1/projects", json={"name": "Second"}).json()
+
+    assert first["color"] != "#6b7280"
+    assert second["color"] != "#6b7280"
+    assert first["color"] != second["color"]
+
+
+def test_duplicate_explicit_color_falls_back_to_free_palette_color(auth_client):
+    first = auth_client.post("/api/v1/projects", json={"name": "First", "color": "#22c55e"}).json()
+    second = auth_client.post(
+        "/api/v1/projects", json={"name": "Second", "color": "#22c55e"}
+    ).json()
+
+    assert first["color"] == "#22c55e"
+    assert second["color"] != first["color"]
+
+
+def test_legacy_default_and_duplicate_colors_are_reassigned(client):
+    with db_module.get_session_factory()() as db:
+        db.add_all(
+            [
+                Project(name="Legacy gray", color="#6b7280"),
+                Project(name="First purple", color="#c084fc"),
+                Project(name="Second purple", color="#c084fc"),
+            ]
+        )
+        db.commit()
+
+        project_svc.ensure_unique_project_colors(db)
+        projects = list(
+            db.scalars(select(Project).where(Project.is_inbox.is_(False)).order_by(Project.id))
+        )
+
+    colors = [project.color for project in projects]
+    assert "#6b7280" not in colors
+    assert len(colors) == len(set(colors))
+    assert projects[1].color == "#c084fc"
 
 
 def test_archive_and_unarchive(auth_client):

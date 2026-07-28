@@ -4,6 +4,26 @@ from sqlalchemy.orm import Session
 
 from app.models import Project, Task, TaskStatus, utcnow
 
+DEFAULT_PROJECT_COLOR = "#6b7280"
+PROJECT_COLORS = [
+    "#f59e0b",
+    "#38bdf8",
+    "#a78bfa",
+    "#34d399",
+    "#fb7185",
+    "#fbbf24",
+    "#2dd4bf",
+    "#c084fc",
+    "#f97316",
+    "#0ea5e9",
+    "#8b5cf6",
+    "#10b981",
+    "#f43f5e",
+    "#eab308",
+    "#14b8a6",
+    "#d946ef",
+]
+
 
 class ProjectError(Exception):
     pass
@@ -40,12 +60,45 @@ def list_projects(db: Session, include_archived: bool = False) -> list[tuple[Pro
     return [(p, counts.get(p.id, 0)) for p in projects]
 
 
+def _next_project_color(db: Session, preferred: str | None = None) -> str:
+    """Return a distinct project color while the shared palette has capacity."""
+    used = set(db.scalars(select(Project.color)))
+    if preferred and preferred != DEFAULT_PROJECT_COLOR and preferred not in used:
+        return preferred
+    for candidate in PROJECT_COLORS:
+        if candidate not in used:
+            return candidate
+    # More projects than palette entries: preserve an explicit choice, otherwise
+    # cycle predictably. At this point a repeated color is unavoidable.
+    return preferred or PROJECT_COLORS[len(used) % len(PROJECT_COLORS)]
+
+
+def ensure_unique_project_colors(db: Session) -> None:
+    """Replace legacy gray and duplicate colors, preserving stable unique colors."""
+    projects = list(db.scalars(select(Project).order_by(Project.id)))
+    used: set[str] = set()
+    changed = False
+    for project in projects:
+        color = project.color
+        needs_color = not project.is_inbox and (color == DEFAULT_PROJECT_COLOR or color in used)
+        if needs_color:
+            color = next(
+                (candidate for candidate in PROJECT_COLORS if candidate not in used), color
+            )
+            if color != project.color:
+                project.color = color
+                changed = True
+        used.add(color)
+    if changed:
+        db.commit()
+
+
 def create_project(
-    db: Session, name: str, color: str = "#6b7280", description: str = ""
+    db: Session, name: str, color: str | None = None, description: str = ""
 ) -> Project:
     if db.scalar(select(Project).where(func.lower(Project.name) == name.lower())):
         raise ProjectError(f"Project '{name}' already exists")
-    project = Project(name=name, color=color, description=description)
+    project = Project(name=name, color=_next_project_color(db, color), description=description)
     db.add(project)
     db.commit()
     db.refresh(project)

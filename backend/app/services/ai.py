@@ -10,7 +10,6 @@ All failures degrade gracefully: the caller always gets a usable draft
 import json
 import logging
 import re
-import zlib
 from datetime import date
 
 from sqlalchemy.exc import IntegrityError
@@ -260,19 +259,6 @@ def enhance_task(db: Session, task: Task) -> DraftResult:
         return DraftResult(_fallback_draft(task.title), ok=False, error=str(exc))
 
 
-# Palette for auto-created projects; stable pick by name so re-drafts agree.
-AUTO_PROJECT_COLORS = [
-    "#f59e0b",
-    "#38bdf8",
-    "#a78bfa",
-    "#34d399",
-    "#fb7185",
-    "#fbbf24",
-    "#2dd4bf",
-    "#c084fc",
-]
-
-
 def _unglue_project_name(db: Session, name: str) -> str:
     """Отклеить описание, если модель скопировала строку индекса целиком.
 
@@ -300,9 +286,8 @@ def resolve_project_id(
     description = _sanitize_description(project_description)
     project = find_project_by_name(db, name)
     if project is None:
-        color = AUTO_PROJECT_COLORS[zlib.crc32(name.lower().encode()) % len(AUTO_PROJECT_COLORS)]
         try:
-            return create_project(db, name=name, color=color, description=description).id
+            return create_project(db, name=name, description=description).id
         except IntegrityError:  # lost a create race: someone inserted it first
             db.rollback()
             project = find_project_by_name(db, name)

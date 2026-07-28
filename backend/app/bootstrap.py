@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.db import get_engine, get_session_factory
 from app.models import Base, User
 from app.services.auth import create_user
-from app.services.projects import get_inbox
+from app.services.projects import ensure_unique_project_colors, get_inbox
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ def init_db() -> None:
     settings = get_settings()
     with get_session_factory()() as db:
         get_inbox(db)
+        ensure_unique_project_colors(db)
         if db.scalar(select(User).limit(1)) is None:
             if settings.admin_username and settings.admin_password:
                 create_user(db, settings.admin_username, settings.admin_password)
