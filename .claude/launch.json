@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && VITE_PROXY_TARGET=http://localhost:80 npm run dev -- --port 5173 --strictPort"
+      ],
+      "port": 5173
+    }
+  ]
+}
