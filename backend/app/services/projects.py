@@ -60,9 +60,13 @@ def list_projects(db: Session, include_archived: bool = False) -> list[tuple[Pro
     return [(p, counts.get(p.id, 0)) for p in projects]
 
 
-def _next_project_color(db: Session, preferred: str | None = None) -> str:
+def _next_project_color(db: Session, preferred: str | None = None, *,
+                         exclude_project_id: int | None = None) -> str:
     """Return a distinct project color while the shared palette has capacity."""
-    used = set(db.scalars(select(Project.color)))
+    q = select(Project.color)
+    if exclude_project_id is not None:
+        q = q.where(Project.id != exclude_project_id)
+    used = set(db.scalars(q))
     if preferred and preferred != DEFAULT_PROJECT_COLOR and preferred not in used:
         return preferred
     for candidate in PROJECT_COLORS:
@@ -74,7 +78,26 @@ def _next_project_color(db: Session, preferred: str | None = None) -> str:
 
 
 def ensure_unique_project_colors(db: Session) -> None:
-    """Replace legacy gray and duplicate colors, preserving stable unique colors."""
+    """Replace legacy gray and duplicate colors, preserving stable unique colors.
+
+    One-time migration: skips once no non-inbox project has the default gray color
+    or shares a color with another project, so later restarts don't overwrite
+    user-selected colors.
+    """
+    has_legacy_gray = db.scalar(
+        select(Project).where(
+            Project.is_inbox.is_(False), Project.color == DEFAULT_PROJECT_COLOR
+        ).limit(1)
+    )
+    has_duplicate = db.scalar(
+        select(Project.color)
+        .where(Project.is_inbox.is_(False))
+        .group_by(Project.color)
+        .having(func.count(Project.id) > 1)
+        .limit(1)
+    )
+    if not has_legacy_gray and not has_duplicate:
+        return
     projects = list(db.scalars(select(Project).order_by(Project.id)))
     used: set[str] = set()
     changed = False
@@ -124,7 +147,7 @@ def update_project(
             raise ProjectError(f"Project '{name}' already exists")
         project.name = name
     if color is not None:
-        project.color = color
+        project.color = _next_project_color(db, color, exclude_project_id=project.id)
     if description is not None:
         project.description = description
     if archived is not None and not project.is_inbox:
