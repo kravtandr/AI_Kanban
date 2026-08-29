@@ -453,3 +453,72 @@ def record_estimate(
             before_work=not started,
         )
     )
+
+
+# --- Cold start (§6, §5.4 p.2) ----------------------------------------------
+
+
+def seed_missing_events(db: Session, *, at: datetime | None = None) -> int:
+    """Cold start: one "as of now the task is in state X" row per task that has NOT A
+    SINGLE event in the journal.
+
+    The check is PER TASK, not "does the table hold any event at all": a global
+    guard would disable seeding forever after the first run, and any task created
+    during a rollback window to an older image would stay eventless and silently
+    report in_progress = 0m.
+
+    The timestamp is utcnow(), NOT created_at. Otherwise two tasks currently sitting
+    in In Progress would report "working since June": an eight-week invented session
+    straight into the median. Nothing about a residence in in_progress is recoverable
+    and none of it is invented (§6).
+
+    Soft-deleted tasks are seeded too, with a `deleted` row, so that a pre-launch
+    deleted task stuck in in_progress does not accumulate time until the purge.
+
+    Entities are selected, not identifiers: db.get(Task, task_id) would return
+    Task | None and mypy with check_untyped_defs would fail the mandatory gate, plus
+    it is an extra SELECT per task on top of a query that already fetched everything.
+    """
+    at = at or utcnow()
+    tasks = db.scalars(
+        select(Task).where(~select(TaskEvent.id).where(TaskEvent.task_id == Task.id).exists())
+    ).all()
+    for task in tasks:
+        db.add(
+            TaskEvent(
+                task_id=task.id,
+                at=at,
+                status=logical_status(db, task),
+                project_id=task.project_id,
+                source="seed",
+            )
+        )
+    if tasks:
+        db.commit()
+    return len(tasks)
+
+
+def reconcile_all(db: Session, *, at: datetime | None = None) -> int:
+    """Startup drift repair (§5.4 p.2): append a `drift` event for every task whose
+    current state disagrees with its last journal row.
+
+    Such a task is excluded from the calibration corpus over the stretch where the
+    divergence could have hidden work (§8.1) - we do not know WHEN it changed.
+
+    Runs AFTER seed_missing_events: a task with an empty journal disagrees with it by
+    definition, so the reverse order would label every pre-existing task `drift`
+    instead of `seed` - and the two labels answer different questions in the coverage
+    banner (§10.1).
+
+    The return value goes into the startup log ONLY. The dashboard recomputes the
+    number from the journal by the `drift` label at request time; there is nowhere to
+    store it (§2.1) and the next deploy would zero it while the events live on.
+    """
+    at = at or utcnow()
+    repaired = 0
+    for task in db.scalars(select(Task)).all():
+        if record_state(db, task, at=at, source="drift"):
+            repaired += 1
+    if repaired:
+        db.commit()
+    return repaired

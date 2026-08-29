@@ -18,6 +18,7 @@ os.environ["ADMIN_PASSWORD"] = ""
 os.environ["WHISPER_BASE_URL"] = ""
 
 from app import db as db_module  # noqa: E402
+from app.bootstrap import init_db  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.models import Base, Task  # noqa: E402
 from app.services import analytics  # noqa: E402
@@ -140,6 +141,9 @@ def client() -> TestClient:
     db_module.set_engine_for_tests(engine)
     get_settings.cache_clear()
     reset_rate_limiter()
+    # lifespan в тестах не запускается (§13.1), поэтому боевая инициализация
+    # вызывается напрямую. Идёт после cache_clear(): init_db() читает настройки.
+    init_db()
 
     with db_module.get_session_factory()() as db:
         create_user(db, USERNAME, PASSWORD)
