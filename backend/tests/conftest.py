@@ -46,12 +46,24 @@ def _install_unicode_lower(engine) -> None:
         )
 
 
+def _enforce_foreign_keys(engine) -> None:
+    """SQLite по умолчанию НЕ проверяет внешние ключи. Без этого ни один
+    ON DELETE CASCADE в репозитории не проверяется тестами: сломанный каскад даёт
+    зелёный CI, а потом молча и навсегда убивает ежедневную чистку. Тот же класс
+    расхождения теста с продом, который уже закрывает _install_unicode_lower."""
+
+    @event.listens_for(engine, "connect")
+    def _register(dbapi_connection, _record):  # pragma: no cover - обвязка соединения
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+
 @pytest.fixture()
 def client() -> TestClient:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     _install_unicode_lower(engine)
+    _enforce_foreign_keys(engine)
     Base.metadata.create_all(engine)
     db_module.set_engine_for_tests(engine)
     get_settings.cache_clear()

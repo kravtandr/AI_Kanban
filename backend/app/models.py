@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Date, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -120,3 +120,93 @@ class LlmUsage(Base):
     input_tokens: Mapped[int] = mapped_column(default=0)
     output_tokens: Mapped[int] = mapped_column(default=0)
     ok: Mapped[bool] = mapped_column(default=True)
+
+
+class EstimateBucket(StrEnum):
+    xs = "XS"
+    s = "S"
+    m = "M"
+    l = "L"  # noqa: E741
+    xl = "XL"
+
+
+# Journal-only pseudo-statuses. They are absent from TaskStatus and must stay absent:
+# these are states in which a task sits in no board column at all. That is exactly why
+# TaskEvent.status is a String and not Enum(TaskStatus): create_all cannot ALTER TYPE a
+# native PG enum (ADR-0008), and the journal vocabulary must be WIDER than the board's.
+EVENT_STATUS_DELETED = "deleted"  # the task is soft-deleted
+EVENT_STATUS_PARKED = "parked"  # the task's project is archived
+
+
+class TaskEvent(Base):
+    """Append-only journal of task states.
+
+    A row reads: "since `at` the task sits in status `status` inside project
+    `project_id`". The interval ends at the next row of the same task, or at `now`
+    when there is no next row.
+
+    project_id is stored as a SNAPSHOT and bounds the interval on par with the status:
+    moving a task into another project must not retroactively carry already measured
+    hours into the new project.
+
+    ondelete="CASCADE" is load-bearing, not hygiene: purge_deleted_tasks calls
+    db.delete(task) while _purge_loop swallows exceptions, so a restricting foreign key
+    would kill the daily purge silently and forever.
+    """
+
+    __tablename__ = "task_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime)  # naive UTC
+    status: Mapped[str] = mapped_column(String(16))  # TaskStatus | deleted | parked
+    project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # A vocabulary of THREE values, not two:
+    #   "live"  - observed at the moment of the mutation;
+    #   "seed"  - written by the cold start;
+    #   "drift" - written by the startup reconciliation when the state had diverged
+    #             from the journal.
+    # "seed" and "drift" are kept apart on purpose: the read model answers DIFFERENT
+    # questions with them (coverage.seeded_tasks and coverage.drift_repaired), and the
+    # two cases can only be told apart afterwards by this very label - the difference is
+    # stored nowhere else. String(8) fits both.
+    source: Mapped[str] = mapped_column(String(8), default="live")
+
+    __table_args__ = (Index("ix_task_events_task_id_id", "task_id", "id"),)
+
+
+class TaskEstimate(Base):
+    """Append-only journal of estimates. The row with the highest id wins.
+
+    A separate table rather than a column in tasks, and rather than a field in ai_meta:
+    ai_meta is overwritten by a repeated draft, while we need the history - to tell a
+    FORECAST (an estimate made before the work started) from a REVISION (an estimate
+    made after the fact, looking at the measured time in the modal). Only forecasts
+    enter the calibration corpus; otherwise the loop learns on hindsight and converges
+    to "your estimates are perfect".
+    """
+
+    __tablename__ = "task_estimates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime)
+    # An EstimateBucket value OR an empty string - a tombstone meaning "estimate
+    # removed". String(2) fits both "XS" and "": the longest bucket value is two
+    # characters and the tombstone is shorter. The column stays NOT NULL and the journal
+    # stays append-only: clearing an estimate neither deletes nor rewrites a row.
+    bucket: Mapped[str] = mapped_column(String(2))
+    source: Mapped[str] = mapped_column(String(8), default="user")  # ai | user | mcp
+    # True when the task had NO in_progress event yet at the moment of writing.
+    # Computed from the journal by record_estimate and frozen there: an after-the-fact
+    # re-estimate must not retroactively pretend to be a forecast.
+    #
+    # A flag, not a comparison of ids across tables: task_events.id and
+    # task_estimates.id are two independent sequences and their relative order means
+    # nothing. On a real board there are 3-5x more events than estimates, so
+    # "estimate.id < event.id" holds almost always, and a rule built on it would
+    # degenerate into "an estimate exists" - letting in exactly the revision this table
+    # exists to cut off.
+    before_work: Mapped[bool] = mapped_column(default=True)
+
+    __table_args__ = (Index("ix_task_estimates_task_id_id", "task_id", "id"),)
