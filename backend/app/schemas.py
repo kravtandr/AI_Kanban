@@ -132,3 +132,19 @@ class TranscriptionOut(BaseModel):
     """Recognised speech. An empty string is a valid result (silence)."""
 
     text: str
+
+
+class BucketCalibration(BaseModel):
+    """What one estimate bucket is worth on this board right now (§10.1).
+
+    `seed_minutes` is the immovable anchor the prompt always sees (§3.3);
+    `minutes` is what is in effect now; `observed_minutes` is the raw median even
+    when the sample is still too small to switch over.
+    """
+
+    bucket: str
+    minutes: int
+    seed_minutes: int
+    observed_minutes: int | None
+    samples: int
+    calibrated: bool

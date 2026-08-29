@@ -14,15 +14,28 @@ idempotent, so the corruption would erase its own evidence. `frozen=True` makes
 that impossible rather than unlikely.
 """
 
+import itertools
+import statistics
 from dataclasses import dataclass, replace
 from datetime import datetime
 
+from app.schemas import BucketCalibration
+
 # --- Constants (§8) ----------------------------------------------------------
+SEED_BUCKET_MINUTES: dict[str, int] = {"XS": 15, "S": 45, "M": 120, "L": 300, "XL": 720}
+# An explicit constant, not derived from the literal order of SEED_BUCKET_MINUTES:
+# it also fixes the row order of buckets[] and the order of the monotonicity walk.
+BUCKET_ORDER: tuple[str, ...] = ("XS", "S", "M", "L", "XL")
+MIN_SAMPLES = 5  # per bucket, so the median stops being a single number
+MIN_SEGMENT_SAMPLES = 5  # per project, for the bias factor
+MIN_SAMPLE_SECONDS = 60  # under a minute is not an observation but an agent click
 # The ceiling of a single spell. A card forgotten in In Progress over the weekend
-# gives 60 hours and alone outweighs a month of real work. Applies to CLOSED
-# spells only (§7.1 R7). The remaining calibration constants of §8 join this
-# block in the calibration task.
+# gives 60 hours and alone outweighs a month of real work. 24 h and not 8 h for
+# coherence: the seed value of XL is 720 min (12 h), so an 8 h ceiling would make
+# XL uncalibratable BY CONSTRUCTION. Applies to CLOSED spells only (§7.1 R7).
 MAX_SPELL_SECONDS = 24 * 3600
+MIN_BUCKET_MINUTES = 5  # floor of the reported value: nothing may divide by zero
+STUCK_DAYS = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,3 +215,119 @@ def clip(spans: list[Span], start: datetime, end: datetime) -> list[Span]:
             continue
         out.append(replace(span, start=lo, end=hi))
     return out
+
+
+@dataclass(frozen=True)
+class Observation:
+    """One unit of the calibration corpus (§8.1). A task yields exactly one."""
+
+    task_id: int
+    bucket: str  # the FORECAST estimate, rule 3
+    seconds: int  # calibration_seconds, rule 4
+    project_id: int | None  # project of the MAJORITY of those seconds (§8.3)
+
+
+def calibrate(corpus: list[Observation]) -> list[BucketCalibration]:
+    """bucket -> how many minutes it is worth on this board right now (§8.2).
+
+    Pure and windowless: the request window `days` is not applied to calibration
+    at all (§7.4), and inversions are found separately, by find_inversions() over
+    the finished result.
+    """
+    out: list[BucketCalibration] = []
+    for bucket in BUCKET_ORDER:
+        seed = SEED_BUCKET_MINUTES[bucket]
+        sample = sorted(o.seconds for o in corpus if o.bucket == bucket)
+        n = len(sample)
+        calibrated = n >= MIN_SAMPLES
+        if calibrated:
+            # median_low, not median: on an even n the ordinary median
+            # interpolates and reports a duration NO task ever had. The floor
+            # guards against ONE, not against zero -- MIN_SAMPLE_SECONDS already
+            # keeps sub-minute observations out of the corpus.
+            minutes = max(MIN_BUCKET_MINUTES, round(statistics.median_low(sample) / 60))
+        else:
+            # n == 0 and n < MIN_SAMPLES are one branch: the seed value. samples
+            # and observed_minutes are reported anyway, so the owner can watch the
+            # sample fill up.
+            minutes = seed
+        out.append(
+            BucketCalibration(
+                bucket=bucket,
+                minutes=minutes,
+                seed_minutes=seed,
+                samples=n,
+                calibrated=calibrated,
+                observed_minutes=(round(statistics.median_low(sample) / 60) if n else None),
+            )
+        )
+    return out
+
+
+def find_inversions(buckets: list[BucketCalibration]) -> list[str]:
+    """Buckets whose effective minutes failed to grow against the previous step.
+
+    Monotonicity is NEVER repaired silently: "M > L" is the honest "not enough
+    data" signal (§8.2). The walk goes over the fixed BUCKET_ORDER, only ADJACENT
+    pairs are compared, and the bucket that broke the order is added under its OWN
+    name -- M > L gives ["L"], not ["M"]. Equality counts too: M == L means the
+    ladder stopped telling two neighbouring sizes apart. Seed values take part in
+    the comparison as well; the seed scale is strictly increasing by construction,
+    so any inversion found means at least one value was measured. The list is []
+    when the ladder is monotonic, never None.
+    """
+    minutes = {b.bucket: b.minutes for b in buckets}
+    return [hi for lo, hi in itertools.pairwise(BUCKET_ORDER) if minutes[hi] <= minutes[lo]]
+
+
+def bias_ratio(observation: Observation) -> float:
+    """r_i = actual minutes / SEED minutes of its bucket (§8.3).
+
+    The denominator is the immovable seed scale, never the recalibrated ladder.
+    Dividing the facts by the median of the facts collapses the coefficient to
+    exactly 1.0 by construction -- "Homelab x2.8" would become unreachable
+    precisely when the bias is largest and most stable (§3.3).
+    """
+    return observation.seconds / 60 / SEED_BUCKET_MINUTES[observation.bucket]
+
+
+def _ratios(corpus: list[Observation]) -> list[float]:
+    # A bucket outside the seed ladder has no denominator at all; calibrate()
+    # skips such an observation the same way, by matching against BUCKET_ORDER.
+    return [bias_ratio(o) for o in corpus if o.bucket in SEED_BUCKET_MINUTES]
+
+
+def board_factor(corpus: list[Observation]) -> float | None:
+    """Median r_i over the whole board; None while the sample is too small."""
+    ratios = _ratios(corpus)
+    if len(ratios) < MIN_SAMPLES:
+        return None
+    return statistics.median_low(ratios)
+
+
+def project_factor(corpus: list[Observation], project_id: int | None) -> float | None:
+    """Median r_i inside one project (§8.3); None below MIN_SEGMENT_SAMPLES.
+
+    Each observation belongs to exactly one project, by the majority-of-hours
+    rule, so sum(n_p) == corpus_size and no observation is counted twice.
+    """
+    ratios = _ratios([o for o in corpus if o.project_id == project_id])
+    if len(ratios) < MIN_SEGMENT_SAMPLES:
+        return None
+    return statistics.median_low(ratios)
+
+
+def relative_factor(project: float | None, board: float | None) -> float | None:
+    """project_factor / board_factor (§8.3).
+
+    BOTH operands are guarded and the project check comes FIRST. project_factor
+    becomes None whenever n_p < MIN_SEGMENT_SAMPLES, which on a board of ~30 tasks
+    and 9 projects is the norm, not an edge case: a guard on `board` alone would
+    evaluate None / 1.6 -> TypeError and return 500 from GET /api/v1/analytics,
+    and with it from POST /ai/insights, where `data` is filled ALWAYS. An empty
+    board factor (None or 0.0) still yields None.
+
+    The coefficient is REPORTED, not applied automatically: at n = 5 multiplying
+    forecasts by it only amplifies noise.
+    """
+    return project / board if project is not None and board else None
