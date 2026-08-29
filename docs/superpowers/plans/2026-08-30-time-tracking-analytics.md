@@ -4506,7 +4506,6 @@ git commit -m "feat(tasks): оценка в TaskIn/TaskPatch/TaskOut и запи
 поле, которого нет в сигнатуре create_task (§9.1). Оценка пишется до состояния,
 иначе POST {status:in_progress, estimate:M} стал бы ревизией (§8.1 п.3)."
 ```
-```
 
 ---
 
@@ -7272,8 +7271,8 @@ export default function StatsModal({ tasks, budgetHours, onBudgetChange, onClose
           </p>
         )}
       </section>
+```
 
-      {/* 8. Единственный вызов LL
 - [ ] **Step 3 (окончание): дописать блок 8 и подпись данных**
 
 Продолжение файла `frontend/src/components/StatsModal.tsx` — сразу после закрывающего `</section>` блока «План на сегодня»:
