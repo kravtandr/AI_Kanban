@@ -19,6 +19,20 @@ import statistics
 from dataclasses import dataclass, replace
 from datetime import datetime
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import (
+    EVENT_STATUS_DELETED,
+    EVENT_STATUS_PARKED,
+    EstimateBucket,
+    Project,
+    Task,
+    TaskEstimate,
+    TaskEvent,
+    TaskStatus,
+    utcnow,
+)
 from app.schemas import BucketCalibration
 
 # --- Constants (§8) ----------------------------------------------------------
@@ -331,3 +345,111 @@ def relative_factor(project: float | None, board: float | None) -> float | None:
     forecasts by it only amplifies noise.
     """
     return project / board if project is not None and board else None
+
+
+# --- Emission (§5.1) --------------------------------------------------------
+
+
+def logical_status(db: Session, task: Task) -> str:
+    """The task's state in journal terms: a board column or a pseudo-status."""
+    if task.deleted_at is not None:
+        return EVENT_STATUS_DELETED
+    project = db.get(Project, task.project_id)
+    if project is not None and project.archived_at is not None:
+        return EVENT_STATUS_PARKED
+    return task.status.value
+
+
+def last_event(db: Session, task_id: int) -> TaskEvent | None:
+    return db.scalars(
+        select(TaskEvent).where(TaskEvent.task_id == task_id).order_by(TaskEvent.id.desc()).limit(1)
+    ).first()
+
+
+def state_matches(db: Session, task: Task) -> bool:
+    """Reading half of record_state: does the journal already agree with the state?
+
+    Adds nothing and mutates nothing - SELECTs only. It exists as a separate name
+    so that production (record_state) and the test tripwire (§5.4 p.3) check ONE
+    predicate rather than two similar ones.
+    """
+    prev = last_event(db, task.id)
+    return (
+        prev is not None
+        and prev.status == logical_status(db, task)
+        and prev.project_id == task.project_id
+    )
+
+
+def record_state(
+    db: Session, task: Task, *, at: datetime | None = None, source: str = "live"
+) -> bool:
+    """Append a state snapshot IF it differs from the last journal row.
+
+    Idempotent by construction. Two consequences it exists for:
+      * a repeated call (a drag inside the same column) creates no zero-length spans;
+      * a MISSED call loses no transition: the next mutation of this task sees the
+        mismatch and appends the row. The bug degrades into a shifted timestamp,
+        never into a lost measurement (§3.1).
+
+    Does NOT commit: the transaction belongs to the caller, so the status and its
+    event land together or not at all.
+    """
+    if state_matches(db, task):
+        return False
+    db.add(
+        TaskEvent(
+            task_id=task.id,
+            at=at or utcnow(),
+            status=logical_status(db, task),
+            project_id=task.project_id,
+            source=source,
+        )
+    )
+    return True
+
+
+def record_estimate(
+    db: Session,
+    task_id: int,
+    bucket: EstimateBucket | None,
+    *,
+    at: datetime | None = None,
+    source: str = "user",
+) -> None:
+    """Append an estimate. bucket=None writes a TOMBSTONE (bucket=""): estimate cleared.
+
+    `before_work` is computed HERE, from the journal, and frozen into the row. That
+    is exactly why the call order in create_task/update_task (§5.2) is mandatory:
+    the estimate is written BEFORE record_state, i.e. before the in_progress event
+    exists.
+
+    The event lookup is bounded by `at`, not by "whatever is in the journal": the
+    timestamp is an argument (§13 p.3), and a test building history in an arbitrary
+    CALL order must still get a chronologically correct flag. Without
+    `TaskEvent.at <= at`, record_estimate(at=T-1h) after record_state(in_progress,
+    at=T) would silently mark a forecast as a revision - and the flag is frozen, so
+    the damage would be undetectable afterwards.
+    """
+    at = at or utcnow()
+    started = (
+        db.scalar(
+            select(TaskEvent.id)
+            .where(
+                TaskEvent.task_id == task_id,
+                TaskEvent.status == TaskStatus.in_progress.value,
+                TaskEvent.at <= at,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+    db.add(
+        TaskEstimate(
+            task_id=task_id,
+            at=at,
+            bucket=bucket.value if bucket is not None else "",
+            source=source,
+            before_work=not started,
+        )
+    )

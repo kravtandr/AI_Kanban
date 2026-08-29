@@ -5,7 +5,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Project, Task, TaskPriority, TaskSource, TaskStatus, utcnow
+from app.models import EstimateBucket, Project, Task, TaskPriority, TaskSource, TaskStatus, utcnow
+from app.services import analytics
 from app.services.projects import get_inbox
 
 
@@ -86,6 +87,8 @@ def create_task(
     due_date: date | None = None,
     source: TaskSource = TaskSource.manual,
     ai_meta: dict | None = None,
+    estimate: EstimateBucket | None = None,  # comes from TaskIn.estimate (§9.1)
+    estimate_source: str = "user",  # task_estimates.source: "user" | "ai" | "mcp"
 ) -> Task:
     if project_id is None:
         project_id = get_inbox(db).id
@@ -106,6 +109,13 @@ def create_task(
     if status == TaskStatus.done:
         task.completed_at = utcnow()
     db.add(task)
+    db.flush()  # task.id only exists after the INSERT
+    now = utcnow()  # one instant for the whole transaction
+    if estimate is not None:
+        # Estimate BEFORE state: record_estimate derives before_work from the
+        # journal, so it must run before the in_progress event exists (§5.2).
+        analytics.record_estimate(db, task.id, estimate, at=now, source=estimate_source)
+    analytics.record_state(db, task, at=now)  # birth, including status-at-birth
     db.commit()
     db.refresh(task)
     return task
@@ -127,6 +137,19 @@ def update_task(db: Session, task_id: int, **fields) -> Task:
         task.due_date = None
     if fields.get("status") is not None:
         _apply_status(db, task, fields["status"])
+    now = utcnow()
+    if fields.get("clear_estimate"):
+        # A tombstone, not a DELETE: the journal is append-only (§4). Checked
+        # FIRST, like clear_due_date: {"estimate":"M","clear_estimate":true} is a
+        # clear.
+        analytics.record_estimate(
+            db, task.id, None, at=now, source=fields.get("estimate_source") or "user"
+        )
+    elif fields.get("estimate") is not None:
+        analytics.record_estimate(
+            db, task.id, fields["estimate"], at=now, source=fields.get("estimate_source") or "user"
+        )
+    analytics.record_state(db, task, at=now)  # catches both status and project changes
     db.commit()
     db.refresh(task)
     return task
@@ -146,6 +169,7 @@ def _apply_status(
 def move_task(db: Session, task_id: int, status: TaskStatus, sort_order: int | None = None) -> Task:
     task = get_task(db, task_id)
     _apply_status(db, task, status, sort_order)
+    analytics.record_state(db, task)
     db.commit()
     db.refresh(task)
     return task
@@ -154,6 +178,7 @@ def move_task(db: Session, task_id: int, status: TaskStatus, sort_order: int | N
 def delete_task(db: Session, task_id: int) -> None:
     task = get_task(db, task_id)
     task.deleted_at = utcnow()
+    analytics.record_state(db, task, at=task.deleted_at)  # closes the open interval
     db.commit()
 
 

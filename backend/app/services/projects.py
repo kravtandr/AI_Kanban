@@ -3,6 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Project, Task, TaskStatus, utcnow
+from app.services import analytics
 
 DEFAULT_PROJECT_COLOR = "#6b7280"
 PROJECT_COLORS = [
@@ -128,7 +129,16 @@ def update_project(
     if description is not None:
         project.description = description
     if archived is not None and not project.is_inbox:
+        # Archiving changes neither status nor deleted_at, but it takes the card
+        # off the board: without a `parked` event the task's last event stays
+        # in_progress and its spell is open FOREVER, with nothing able to close
+        # it (§5.2). Unarchiving appends the reverse transition.
         project.archived_at = utcnow() if archived else None
+        db.flush()
+        for task in db.scalars(
+            select(Task).where(Task.project_id == project.id, Task.deleted_at.is_(None))
+        ).all():
+            analytics.record_state(db, task, at=project.archived_at or utcnow())
     db.commit()
     db.refresh(project)
     return project

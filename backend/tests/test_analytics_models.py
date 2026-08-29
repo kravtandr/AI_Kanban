@@ -8,6 +8,13 @@ from app import db as db_module
 from app.models import EstimateBucket, Task, TaskEstimate, TaskEvent, TaskStatus, utcnow
 from app.services.projects import get_inbox
 
+# Этот модуль проверяет СЛОЙ МОДЕЛЕЙ и DDL: он создаёт Task напрямую, минуя
+# сервисы, и именно в этом его смысл. Сторож §5.4 п.3 справедливо считает такую
+# запись непрослеженной, поэтому он снимается на весь модуль. Прогонять _task
+# через create_task нельзя: сервис эмиссии не существовал, когда писались эти
+# тесты, и каскады/умолчания колонок надо щупать без него.
+pytestmark = pytest.mark.usefixtures("untracked_writes_allowed")
+
 
 def _task(db) -> Task:
     task = Task(project_id=get_inbox(db).id, title="Fix backup", status=TaskStatus.todo)
