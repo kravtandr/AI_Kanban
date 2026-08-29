@@ -1,7 +1,10 @@
 """Startup initialization: create tables, ensure Inbox project and admin user.
 
-MVP uses idempotent `create_all` instead of Alembic migrations; Alembic will be
-introduced with the first schema change (recorded in ADR-0002).
+Schema is applied by an idempotent `create_all`, not by Alembic. ADR-0008 narrowed the
+promise of ADR-0002: adding a NEW table is fully covered by `create_all` and does not
+force Alembic, but the next change that touches an EXISTING table (a column, its type,
+a constraint, an enum value) forces Alembic unconditionally, together with a migration
+step in DEPLOYMENT.md.
 """
 
 import logging
