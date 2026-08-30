@@ -149,6 +149,27 @@ def merge_runs(spans: list[Span]) -> list[Spell]:
     ]
 
 
+def _untracked(events: list[Ev]) -> bool:
+    """§7.1 R2, the ONE copy: a non-live event at or after the first in_progress.
+
+    A non-live event BEFORE the first in_progress only pinned the starting point
+    and could not hide a single minute of work; from the first in_progress onward
+    it could have invented the START of a spell or hidden a whole spell. A task
+    that was never in_progress is NOT untracked by this rule -- it cut off from
+    nothing.
+
+    Both fold().tracked (corpus admission) and coverage.untracked_tasks (the
+    cold-start banner) MUST call this single predicate: they agreed before only
+    because _load_events() already returns rows ordered by (task_id, id), and a
+    change to one copy without the other would make the banner report a
+    different N than fold() actually excludes, with no test failing.
+    """
+    first_ip = next((e for e in events if e.status == "in_progress"), None)
+    if first_ip is None:
+        return False
+    return any(e.source != "live" and e.id >= first_ip.id for e in events)
+
+
 def fold(events: list[Ev], now: datetime) -> TaskTime:
     """§7.1 R1-R8. Events of ONE task; `now` is an argument, never the clock.
 
@@ -158,14 +179,12 @@ def fold(events: list[Ev], now: datetime) -> TaskTime:
     # R1: id, not at. One sequence, one uvicorn worker -- id IS the causal order.
     ordered = sorted(events, key=lambda e: e.id)
 
-    # R2: interval admission rule, not "no non-live event ever". A non-live event
-    # BEFORE the first in_progress only pinned the starting point and could not
-    # hide a single minute of work; from the first in_progress onward it could
-    # have invented the START of a spell or hidden a whole spell.
+    # R2: interval admission rule, not "no non-live event ever" -- see _untracked().
+    # A task never in_progress is tracked=False too (nothing to measure at all),
+    # a question _untracked() does NOT answer: it reports False for such a task
+    # (excluded from nothing), while fold().tracked must still be False here.
     first_ip = next((e for e in ordered if e.status == "in_progress"), None)
-    tracked = first_ip is not None and not any(
-        e.source != "live" and e.id >= first_ip.id for e in ordered
-    )
+    tracked = first_ip is not None and not _untracked(ordered)
 
     # R3: clamp forward. Builds a NEW list; no input element is ever modified.
     anomalies: list[str] = []
@@ -604,16 +623,6 @@ def _prognostic_estimates(db: Session) -> dict[int, str]:
     return out
 
 
-def _is_untracked(events: list[Ev]) -> bool:
-    """coverage.untracked_tasks (§7.1 R2): a non-live event at or after the first
-    in_progress. A task that was never in_progress is NOT counted here — the rule
-    cut it off from nothing."""
-    first = next((e for e in events if e.status == TaskStatus.in_progress.value), None)
-    if first is None:
-        return False
-    return any(e.source != "live" and e.id >= first.id for e in events)
-
-
 def _observation(task_id: int, tt: TaskTime, bucket: str) -> Observation | None:
     """§8.1: one task's journal -> one corpus observation, or None.
 
@@ -675,7 +684,7 @@ def compute(db: Session, *, days: int = 30, now: datetime | None = None) -> Anal
         sources = {e.source for e in events}
         seeded += "seed" in sources
         drift += "drift" in sources
-        untracked += _is_untracked(events)
+        untracked += _untracked(events)
         # §8.4: a task is deleted iff its journal carries a `deleted` event. No filter
         # on `tasks` anywhere in the read path (§7).
         task_deleted = any(e.status == EVENT_STATUS_DELETED for e in events)

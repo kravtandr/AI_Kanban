@@ -457,7 +457,8 @@ def _render_facts(data: AnalyticsOut) -> str:
         f"Closed work in the period: {data.closed_minutes} min "
         f"({data.open_minutes} min still open, {data.deleted_minutes} min on deleted tasks):"
     )
-    for project in data.projects[:5]:
+    top_projects = sorted(data.projects, key=lambda p: p.closed_minutes, reverse=True)
+    for project in top_projects[:5]:
         bias = (
             f", bias x{project.factor:.2f} on {project.samples} task(s)" if project.factor else ""
         )

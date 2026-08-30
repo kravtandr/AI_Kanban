@@ -77,3 +77,63 @@ def test_agent_cannot_forge_the_estimate_provenance(client):
     """estimate_source не параметр инструмента: агент не выбирает, чьей оценка записана."""
     assert "estimate_source" not in inspect.signature(mcp_server.create_task_impl).parameters
     assert "estimate_source" not in inspect.signature(mcp_server.update_task_impl).parameters
+
+
+# --- Finding #5: the MCP agent can WRITE an estimate but every _task_dict-shaped
+# return value used to omit it entirely, so the agent had no way to know one was
+# already set -- and re-estimating after work started writes a before_work=False
+# revision, not a duplicate forecast.
+
+
+def test_create_task_response_carries_the_estimate(client):
+    task = mcp_server.create_task_impl(title="Обновить caddy", project="Inbox", estimate="S")
+    assert task["estimate"] == "S"
+
+
+def test_create_task_response_reports_null_without_an_estimate(client):
+    task = mcp_server.create_task_impl(title="Обновить caddy", project="Inbox")
+    assert task["estimate"] is None
+
+
+def test_get_task_response_carries_the_estimate(client):
+    task = mcp_server.create_task_impl(title="Обновить caddy", project="Inbox", estimate="M")
+    fetched = mcp_server.get_task_impl(task["id"])
+    assert fetched["estimate"] == "M"
+
+
+def test_update_task_response_carries_the_estimate(client):
+    task = mcp_server.create_task_impl(title="Починить бэкап", project="Inbox")
+    updated = mcp_server.update_task_impl(task["id"], estimate="l")
+    assert updated["estimate"] == "L"
+
+
+def test_move_and_complete_response_carry_the_estimate(client):
+    task = mcp_server.create_task_impl(title="Починить бэкап", project="Inbox", estimate="XS")
+    moved = mcp_server.move_task_impl(task["id"], "in_progress")
+    assert moved["estimate"] == "XS"
+    done = mcp_server.complete_task_impl(task["id"])
+    assert done["estimate"] == "XS"
+
+
+def test_list_tasks_response_carries_the_estimate_without_an_n_plus_one(client, monkeypatch):
+    """analytics.latest_estimates(db, ids) must be called ONCE, batched over all
+    listed tasks -- not once per task."""
+    from app.services import analytics as analytics_svc
+
+    mcp_server.create_task_impl(title="Задача А", project="Inbox", estimate="S")
+    mcp_server.create_task_impl(title="Задача Б", project="Inbox", estimate="L")
+
+    calls: list[list[int]] = []
+    original = analytics_svc.latest_estimates
+
+    def counting(db, task_ids):
+        calls.append(list(task_ids))
+        return original(db, task_ids)
+
+    monkeypatch.setattr(mcp_server.analytics_svc, "latest_estimates", counting)
+
+    tasks = mcp_server.list_tasks_impl(query="Задача")
+
+    assert {t["title"]: t["estimate"] for t in tasks} == {"Задача А": "S", "Задача Б": "L"}
+    assert len(calls) == 1
+    assert set(calls[0]) == {t["id"] for t in tasks}

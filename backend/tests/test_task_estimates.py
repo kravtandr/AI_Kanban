@@ -88,3 +88,15 @@ def test_task_without_estimate_reports_null(auth_client):
 
     assert task["estimate"] is None
     assert _estimate_rows(task["id"]) == []
+
+
+def test_get_by_id_reports_the_estimate(auth_client):
+    """GET /tasks/{id} must go through the same _out() as every other endpoint
+    (§9.1): TaskOut.estimate defaults to None and Task has no such attribute,
+    so skipping _out silently reports null even when an estimate was set."""
+    task = _create(auth_client, estimate="M")
+
+    fetched = auth_client.get(f"/api/v1/tasks/{task['id']}")
+
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["estimate"] == "M"

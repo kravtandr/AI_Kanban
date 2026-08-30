@@ -40,7 +40,7 @@ mcp = FastMCP(
 )
 
 
-def _task_dict(task) -> dict:
+def _task_dict(task, estimate: str | None = None) -> dict:
     return {
         "id": task.id,
         "title": task.title,
@@ -53,7 +53,17 @@ def _task_dict(task) -> dict:
         "source": task.source.value,
         "created_at": task.created_at.isoformat(),
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "estimate": estimate,
     }
+
+
+def _task_dict_with_estimate(db, task) -> dict:
+    """Single-task variant of _task_dict: one batched (n=1) call to
+    analytics.latest_estimates, same query as the list path (§9.1). An agent
+    that can WRITE an estimate must also be able to READ it back, or it has no
+    way to know one was already set and may re-estimate a task the owner
+    already sized."""
+    return _task_dict(task, analytics_svc.latest_estimates(db, [task.id]).get(task.id))
 
 
 def _bucket(value: str | None) -> EstimateBucket | None:
@@ -100,12 +110,15 @@ def list_tasks_impl(
             query=query,
             limit=limit,
         )
-        return [_task_dict(t) for t in tasks]
+        # One batched query for the whole page, not one per task (§9.1) --
+        # the same shape as api/tasks.py's _out_many.
+        estimates = analytics_svc.latest_estimates(db, [t.id for t in tasks])
+        return [_task_dict(t, estimates.get(t.id)) for t in tasks]
 
 
 def get_task_impl(task_id: int) -> dict:
     with get_session_factory()() as db:
-        return _task_dict(task_svc.get_task(db, task_id))
+        return _task_dict_with_estimate(db, task_svc.get_task(db, task_id))
 
 
 def create_task_impl(
@@ -163,7 +176,7 @@ def create_task_impl(
             # whose estimate this is.
             estimate_source="mcp",
         )
-        return _task_dict(task)
+        return _task_dict_with_estimate(db, task)
 
 
 def update_task_impl(
@@ -197,17 +210,17 @@ def update_task_impl(
             clear_estimate=clear_estimate,
             estimate_source="mcp",
         )
-        return _task_dict(task)
+        return _task_dict_with_estimate(db, task)
 
 
 def move_task_impl(task_id: int, status: str) -> dict:
     with get_session_factory()() as db:
-        return _task_dict(task_svc.move_task(db, task_id, TaskStatus(status)))
+        return _task_dict_with_estimate(db, task_svc.move_task(db, task_id, TaskStatus(status)))
 
 
 def complete_task_impl(task_id: int) -> dict:
     with get_session_factory()() as db:
-        return _task_dict(task_svc.move_task(db, task_id, TaskStatus.done))
+        return _task_dict_with_estimate(db, task_svc.move_task(db, task_id, TaskStatus.done))
 
 
 def delete_task_impl(task_id: int) -> dict:

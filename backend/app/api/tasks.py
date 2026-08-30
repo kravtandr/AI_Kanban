@@ -67,7 +67,7 @@ def create_task(body: TaskIn, db: Session = Depends(get_db)):
 @router.get("/{task_id}", response_model=TaskOut)
 def get_task(task_id: int, db: Session = Depends(get_db)):
     try:
-        return svc.get_task(db, task_id)
+        return _out(db, svc.get_task(db, task_id))
     except svc.TaskError as exc:
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": str(exc)}

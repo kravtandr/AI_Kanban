@@ -12,6 +12,7 @@ from app.services.analytics import (
     Ev,
     Span,
     Spell,
+    _untracked,
     clip,
     fold,
     merge_runs,
@@ -221,6 +222,50 @@ def test_drift_after_the_first_in_progress_untracks_the_task():
 def test_task_without_any_in_progress_is_not_tracked():
     """Nothing to measure, so the corpus does not take it (R2)."""
     assert fold([ev(1, 0, "todo"), ev(2, 1, "done")], at(5)).tracked is False
+
+
+# --- _untracked(): the SINGLE R2 predicate shared by fold() (corpus admission)
+# and compute()'s coverage.untracked_tasks (the cold-start banner). Before the
+# fix, coverage.untracked_tasks had its own copy of this rule (finding #4); a
+# regression there would make the banner claim a different N than the corpus
+# actually excludes, with no test failing. These tests pin `_untracked` against
+# the same fold().tracked behaviour (for tasks that DID reach in_progress --
+# fold().tracked additionally requires that, which _untracked() does not
+# answer), on both sorted and unsorted input: the old duplicate only agreed
+# with fold() because _load_events() happens to return rows already sorted by
+# id, and _untracked() must not rely on that.
+
+
+@pytest.mark.parametrize(
+    ("events", "expected"),
+    [
+        ([ev(1, 0, "todo", source="seed"), ev(2, 1, "in_progress"), ev(3, 3, "done")], False),
+        ([ev(1, 0, "in_progress", source="seed"), ev(2, 3, "done")], True),
+        ([ev(1, 0, "todo"), ev(2, 1, "in_progress"), ev(3, 3, "done", source="drift")], True),
+    ],
+)
+def test_untracked_agrees_with_fold_tracked(events, expected):
+    assert _untracked(events) is expected
+    assert fold(events, at(5)).tracked is not expected
+
+
+def test_untracked_is_false_for_a_task_that_never_reached_in_progress():
+    """_untracked() answers a narrower question than fold().tracked: a task
+    never in_progress is excluded from NOTHING by R2 (untracked=False), even
+    though fold().tracked is also False for it -- for the different reason that
+    there is nothing to measure at all."""
+    events = [ev(1, 0, "todo"), ev(2, 1, "done")]
+    assert _untracked(events) is False
+    assert fold(events, at(5)).tracked is False
+
+
+def test_untracked_does_not_depend_on_input_order():
+    """_load_events() happens to hand back rows sorted by id, but _untracked()
+    must not silently rely on that: the predicate takes id order into account
+    itself (`e.id >= first.id`), not scan order."""
+    ordered = [ev(1, 0, "todo"), ev(2, 1, "in_progress"), ev(3, 3, "done", source="drift")]
+    shuffled = [ordered[2], ordered[0], ordered[1]]
+    assert _untracked(ordered) == _untracked(shuffled) is True
 
 
 def test_clip_cuts_on_both_boundaries_and_carries_factor():

@@ -178,6 +178,62 @@ def test_text_reply_is_cleaned_and_capped():
         ai_svc._clean_text_reply("<think>только рассуждения</think>   ")
 
 
+def test_insights_never_rewrites_the_journal_on_a_clock_regression(auth_client, monkeypatch):
+    """The one corruption that erases its own evidence (module docstring,
+    analytics.py:1-15): R3's forward clamp is idempotent, so if a commit in the
+    SAME request (POST /ai/insights logs usage via _log_usage, which commits)
+    ever wrote the clamped `at` back onto a dirty ORM row, coverage.clock_anomalies
+    would silently go to 0 on the next read and a green suite would never notice.
+
+    Build a journal with an event whose `at` goes backwards (a clock_regression,
+    §7.1 R3), call the insights endpoint, then assert every stored `at` is
+    byte-identical to what was written -- not just that the response still
+    reports the anomaly.
+    """
+    _use_llm(monkeypatch)
+    monkeypatch.setattr(ai_svc, "_call_text_model", lambda system, user_message: ("ок", 1, 1))
+
+    with db_module.get_session_factory()() as db:
+        task = task_svc.create_task(db, title="Почистить логи")
+        task_svc.move_task(db, task.id, TaskStatus.in_progress)
+        task_id = task.id
+
+    # Make the LATEST event's `at` earlier than the one before it: a genuine
+    # clock_regression, not merely an out-of-order write.
+    with db_module.get_session_factory()() as db:
+        events = list(
+            db.scalars(select(TaskEvent).where(TaskEvent.task_id == task_id).order_by(TaskEvent.id))
+        )
+        assert len(events) == 2
+        events[1].at = events[0].at - timedelta(hours=1)
+        db.commit()
+
+    with db_module.get_session_factory()() as db:
+        before = [
+            (e.id, e.at)
+            for e in db.scalars(
+                select(TaskEvent).where(TaskEvent.task_id == task_id).order_by(TaskEvent.id)
+            )
+        ]
+
+    response = auth_client.post("/api/v1/ai/insights", json={"days": 30})
+    assert response.status_code == 200, response.text
+    # The clamp must be visible to the READ path (it is not silently ignored)...
+    assert response.json()["data"]["coverage"]["clock_anomalies"] >= 1
+
+    with db_module.get_session_factory()() as db:
+        after = [
+            (e.id, e.at)
+            for e in db.scalars(
+                select(TaskEvent).where(TaskEvent.task_id == task_id).order_by(TaskEvent.id)
+            )
+        ]
+
+    # ...but the journal on disk must be untouched: the clamp lives ONLY in the
+    # in-memory fold, never written back by the _log_usage commit in this request.
+    assert after == before
+
+
 def test_call_text_model_uses_the_plain_chat_seam(monkeypatch):
     """Блок формата TaskDraft в этот вызов не подмешивается (§11.1)."""
     monkeypatch.setenv("LLM_PROVIDER", "openai")
