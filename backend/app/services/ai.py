@@ -10,7 +10,6 @@ All failures degrade gracefully: the caller always gets a usable draft
 import json
 import logging
 import re
-from datetime import date
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -26,6 +25,7 @@ from app.services.projects import (
     list_projects,
     update_project,
 )
+from app.services.tasks import local_today
 
 log = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ def draft_task(db: Session, text: str) -> DraftResult:
     if not llm_configured(settings):
         return DraftResult(_fallback_draft(text), ok=False, error="LLM is not configured")
     user_message = (
-        f"Today is {date.today().isoformat()}.\n\n{_project_context(db)}\n\nRaw note:\n{text}"
+        f"Today is {local_today().isoformat()}.\n\n{_project_context(db)}\n\nRaw note:\n{text}"
     )
     try:
         draft, tin, tout = _call_model(SYSTEM_PROMPT, user_message)
@@ -243,7 +243,7 @@ def enhance_task(db: Session, task: Task) -> DraftResult:
     if not llm_configured(settings):
         return DraftResult(_fallback_draft(task.title), ok=False, error="LLM is not configured")
     user_message = (
-        f"Today is {date.today().isoformat()}.\n\n{_project_context(db)}\n\n"
+        f"Today is {local_today().isoformat()}.\n\n{_project_context(db)}\n\n"
         "Improve the following existing task. Keep its meaning, rewrite title/description "
         "for clarity, suggest tags and priority.\n"
         f"Title: {task.title}\nDescription:\n{task.description or '(empty)'}\n"

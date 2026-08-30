@@ -219,14 +219,30 @@ def _local_timezone() -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
-def daily_summary(db: Session, day: date | None = None) -> dict:
-    # "Today" is interpreted in the configured timezone; completed_at is stored
-    # as naive UTC, so convert the local-day boundaries to naive UTC to compare.
+def local_today() -> date:
+    """Today in the configured timezone (§7.3).
+
+    date.today() inside the container is a UTC day (TZ is not set in
+    docker-compose.yml and python:3.12-slim lives in UTC), so between 00:00 and
+    03:00 Moscow time it names yesterday. Every place that needs a named day goes
+    through this helper.
+    """
+    return datetime.now(_local_timezone()).date()
+
+
+def local_day_bounds(day: date) -> tuple[datetime, datetime]:
+    """[start, end) of a local day as naive UTC — the form timestamps are stored in."""
     tz = _local_timezone()
-    day = day or datetime.now(tz).date()
-    local_start = datetime(day.year, day.month, day.day, tzinfo=tz)
-    day_start = local_start.astimezone(UTC).replace(tzinfo=None)
-    day_end = (local_start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None)
+    start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    return (
+        start.astimezone(UTC).replace(tzinfo=None),
+        (start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None),
+    )
+
+
+def daily_summary(db: Session, day: date | None = None) -> dict:
+    day = day or local_today()
+    day_start, day_end = local_day_bounds(day)
     base = (
         select(Task).join(Project).where(Task.deleted_at.is_(None), Project.archived_at.is_(None))
     )
