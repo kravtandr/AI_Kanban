@@ -720,10 +720,13 @@ def compute(db: Session, *, days: int = 30, now: datetime | None = None) -> Anal
     inversions = find_inversions(buckets)
     minutes_by_bucket = {b.bucket: b.minutes for b in buckets}
 
-    # Denominator is the FIXED seed ladder, never the recalibrated one (§3.3):
-    # median(actual / median(actual)) collapses to 1.0 by construction.
-    ratios = [o.seconds / 60 / SEED_BUCKET_MINUTES[o.bucket] for o in corpus]
-    board_factor = statistics.median_low(ratios) if len(ratios) >= MIN_SAMPLES else None
+    # The three factor functions of §8.3 are CALLED, never re-derived inline: one
+    # copy of the arithmetic, covered by the tests written for exactly it, and the
+    # off-ladder guard in _ratios() applies here too (a sixth bucket would make
+    # calibrate() ignore it and an unguarded SEED_BUCKET_MINUTES[...] raise a 500).
+    # The local is `board`, NOT `board_factor`: the latter would shadow the module
+    # function for the rest of compute().
+    board = board_factor(corpus)
 
     # Deleted minutes never get a ProjectStat row (§8.4); corpus projects do, so that
     # factor/samples survive a window that clipped every one of their minutes away.
@@ -742,9 +745,7 @@ def compute(db: Session, *, days: int = 30, now: datetime | None = None) -> Anal
     for pid in sorted(project_ids):
         # A snapshot outlives its project (§7.2): no FK, so this must never KeyError.
         name, color = labels.get(pid, ("проект удалён", "#6b7280"))
-        segment = [o for o in corpus if o.project_id == pid]
-        rs = [o.seconds / 60 / SEED_BUCKET_MINUTES[o.bucket] for o in segment]
-        factor = statistics.median_low(rs) if len(rs) >= MIN_SEGMENT_SAMPLES else None
+        factor = project_factor(corpus, pid)
         projects.append(
             ProjectStat(
                 project_id=pid,
@@ -753,11 +754,13 @@ def compute(db: Session, *, days: int = 30, now: datetime | None = None) -> Anal
                 closed_minutes=round(closed_by_project.get(pid, 0.0) / 60),
                 open_minutes=round(open_by_project.get(pid, 0.0) / 60),
                 factor=factor,
-                # The factor check comes FIRST: on a board of ~30 tasks a segment
-                # below MIN_SEGMENT_SAMPLES is the norm, and None / board_factor
-                # would be a TypeError, i.e. a 500 on GET /analytics (§8.3).
-                relative=(factor / board_factor if factor is not None and board_factor else None),
-                samples=len(rs),
+                # relative_factor guards the project operand FIRST: on a board of
+                # ~30 tasks a segment below MIN_SEGMENT_SAMPLES is the norm, and
+                # None / board would be a 500 on GET /analytics (§8.3).
+                relative=relative_factor(factor, board),
+                # The count must match the population the factor was computed over,
+                # so it is the length of the RATIOS, not of the raw segment.
+                samples=len(_ratios([o for o in corpus if o.project_id == pid])),
             )
         )
 
@@ -807,7 +810,7 @@ def compute(db: Session, *, days: int = 30, now: datetime | None = None) -> Anal
             clock_anomalies=anomalies,
             corpus_size=len(corpus),
         ),
-        board_factor=board_factor,
+        board_factor=board,
         # Board minutes are the SUM of segment minutes, not a separate rounding of
         # board seconds: that is what makes sum(p.closed_minutes) == closed_minutes
         # true by construction on fractional cases (§7.4).

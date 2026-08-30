@@ -157,6 +157,41 @@ def test_project_minutes_sum_to_board_minutes(auth_client):
     assert out.closed_minutes == sum(p.closed_minutes for p in out.projects)
 
 
+def test_cap_and_window_compose_multiplicatively(auth_client):
+    """§7.4: k is stamped from the RAW spell length, then applied to the CLIPPED
+    seconds — the two are composed, never substituted for one another.
+
+    A 60h closed spell with only 20h inside a 2-day window and a 24h cap gives
+    20h * (24/60) = 8h. The two wrong answers this pins down: 20h (clipping
+    without the cap) and 24h (capping without the window). Clipping BEFORE
+    computing k would also make this one spell's contribution depend on `days`.
+    """
+    done_at = NOW - timedelta(hours=28)
+    started = done_at - timedelta(hours=60)  # window_start is NOW - 48h
+    with _session() as db:
+        project_id = project_svc.create_project(db, "Alpha").id
+        task = task_svc.create_task(db, title="Забытая в работе")
+        _journal(
+            db,
+            task,
+            [
+                (started, TaskStatus.in_progress.value, project_id),
+                (done_at, TaskStatus.done.value, project_id),
+            ],
+        )
+        db.commit()
+        out = analytics_svc.compute(db, days=2, now=NOW)
+
+    k = analytics_svc.MAX_SPELL_SECONDS / (60 * 3600)
+    clipped_seconds = 20 * 3600
+    expected = round(clipped_seconds * k / 60)
+    assert expected == 480  # 8h, the §7.4 worked example
+    assert out.coverage.capped_spells == 1
+    assert out.closed_minutes == expected
+    assert out.closed_minutes != round(clipped_seconds / 60)  # 1200: no cap applied
+    assert out.closed_minutes != analytics_svc.MAX_SPELL_SECONDS // 60  # 1440: no window
+
+
 def test_orphaned_project_snapshot_renders_without_500(auth_client):
     base = utcnow()
     with _session() as db:
