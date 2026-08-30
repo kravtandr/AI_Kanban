@@ -1,8 +1,10 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models import EstimateBucket, TaskPriority, TaskSource, TaskStatus
+
+_VALID_BUCKETS = {b.value for b in EstimateBucket}
 
 
 class LoginIn(BaseModel):
@@ -127,6 +129,29 @@ class TaskDraft(BaseModel):
     due_date: date | None = Field(
         default=None, description="ISO date resolved from the text, or null"
     )
+    estimate: EstimateBucket | None = Field(
+        default=None,
+        description=(
+            "Effort bucket for focused work time: XS, S, M, L or XL. "
+            "null when the note gives no basis for sizing"
+        ),
+    )
+
+    @field_validator("estimate", mode="before")
+    @classmethod
+    def _lenient_bucket(cls, v):
+        """Плохая оценка НЕ имеет права уронить черновик целиком.
+
+        На openai-пути ответ выскребается регуляркой из свободного текста
+        (ai.py:95-103), и слабая локальная Qwen спокойно отдаёт "medium", "M?",
+        "Small" или 3. Строгая валидация означала бы ValidationError на ВЕСЬ
+        TaskDraft — пользователь потерял бы и заголовок, и описание, и маршрутизацию
+        по проекту (§2.7, FR-5.5).
+        """
+        if v is None:
+            return None
+        key = str(v).strip().strip("?.").upper()
+        return key if key in _VALID_BUCKETS else None
 
 
 class DraftOut(BaseModel):
