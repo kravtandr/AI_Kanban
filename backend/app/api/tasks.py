@@ -3,11 +3,28 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db import get_db
-from app.models import TaskPriority, TaskStatus
+from app.models import Task, TaskPriority, TaskSource, TaskStatus
 from app.schemas import MoveIn, TaskIn, TaskOut, TaskPatch
+from app.services import analytics
 from app.services import tasks as svc
 
 router = APIRouter(prefix="/tasks", tags=["tasks"], dependencies=[Depends(get_current_user)])
+
+
+def _estimate_source(source: TaskSource) -> str:
+    """Provenance is derived here, never sent by the client: TaskIn must not carry a
+    field the service signature does not have, and vice versa (§9.1)."""
+    return {TaskSource.ai: "ai", TaskSource.mcp: "mcp"}.get(source, "user")
+
+
+def _out(db: Session, task: Task) -> TaskOut:
+    est = analytics.latest_estimates(db, [task.id]).get(task.id)
+    return TaskOut.model_validate(task).model_copy(update={"estimate": est})
+
+
+def _out_many(db: Session, tasks: list[Task]) -> list[TaskOut]:
+    est = analytics.latest_estimates(db, [t.id for t in tasks])
+    return [TaskOut.model_validate(t).model_copy(update={"estimate": est.get(t.id)}) for t in tasks]
 
 
 @router.get("", response_model=list[TaskOut])
@@ -20,25 +37,31 @@ def list_tasks(
     all_done: bool = False,
     db: Session = Depends(get_db),
 ):
-    return svc.list_tasks(
+    return _out_many(
         db,
-        project_ids=project_id,
-        status=status,
-        priority=priority,
-        tag=tag,
-        query=q,
-        all_done=all_done,
+        svc.list_tasks(
+            db,
+            project_ids=project_id,
+            status=status,
+            priority=priority,
+            tag=tag,
+            query=q,
+            all_done=all_done,
+        ),
     )
 
 
 @router.post("", response_model=TaskOut, status_code=201)
 def create_task(body: TaskIn, db: Session = Depends(get_db)):
+    fields = body.model_dump()
     try:
-        return svc.create_task(db, **body.model_dump())
+        task = svc.create_task(db, **fields, estimate_source=_estimate_source(fields["source"]))
     except svc.TaskError as exc:
+        # Existing behaviour, must not be lost: an unknown project_id is a 400, not a 500.
         raise HTTPException(
             status_code=400, detail={"code": "bad_request", "message": str(exc)}
         ) from exc
+    return _out(db, task)
 
 
 @router.get("/{task_id}", response_model=TaskOut)
@@ -54,22 +77,24 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
 @router.patch("/{task_id}", response_model=TaskOut)
 def update_task(task_id: int, body: TaskPatch, db: Session = Depends(get_db)):
     try:
-        return svc.update_task(db, task_id, **body.model_dump(exclude_unset=True))
+        task = svc.update_task(db, task_id, **body.model_dump(exclude_unset=True))
     except svc.TaskError as exc:
         code = 404 if "not found" in str(exc).lower() else 400
         raise HTTPException(
             status_code=code, detail={"code": "error", "message": str(exc)}
         ) from exc
+    return _out(db, task)
 
 
 @router.post("/{task_id}/move", response_model=TaskOut)
 def move_task(task_id: int, body: MoveIn, db: Session = Depends(get_db)):
     try:
-        return svc.move_task(db, task_id, body.status, body.sort_order)
+        task = svc.move_task(db, task_id, body.status, body.sort_order)
     except svc.TaskError as exc:
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": str(exc)}
         ) from exc
+    return _out(db, task)
 
 
 @router.delete("/{task_id}", status_code=204)

@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.models import TaskPriority, TaskSource, TaskStatus
+from app.models import EstimateBucket, TaskPriority, TaskSource, TaskStatus
 
 
 class LoginIn(BaseModel):
@@ -52,6 +52,7 @@ class TaskIn(BaseModel):
     due_date: date | None = None
     source: TaskSource = TaskSource.manual
     ai_meta: dict | None = None
+    estimate: EstimateBucket | None = None
 
 
 class TaskPatch(BaseModel):
@@ -63,6 +64,11 @@ class TaskPatch(BaseModel):
     tags: list[str] | None = None
     due_date: date | None = None
     clear_due_date: bool = False
+    estimate: EstimateBucket | None = None
+    # Отдельный флаг, ровно как clear_due_date: роут вызывает
+    # model_dump(exclude_unset=True), поэтому «поле не прислали» и «прислали null»
+    # в сервисе неразличимы, и голый {"estimate": null} молча потерялся бы (§9.1).
+    clear_estimate: bool = False
 
 
 class MoveIn(BaseModel):
@@ -84,6 +90,8 @@ class TaskOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+    # Заполняется в слое API через _out/_out_many, а не с ORM-объекта (§9.1).
+    estimate: str | None = None
 
     model_config = {"from_attributes": True}
 
