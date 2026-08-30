@@ -16,8 +16,9 @@ that impossible rather than unlikely.
 
 import itertools
 import statistics
+from collections import defaultdict
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -33,7 +34,14 @@ from app.models import (
     TaskStatus,
     utcnow,
 )
-from app.schemas import BucketCalibration
+from app.schemas import (
+    AnalyticsOut,
+    BucketCalibration,
+    Coverage,
+    ProjectStat,
+    RunningTask,
+    StuckTask,
+)
 
 # --- Constants (§8) ----------------------------------------------------------
 SEED_BUCKET_MINUTES: dict[str, int] = {"XS": 15, "S": 45, "M": 120, "L": 300, "XL": 720}
@@ -522,3 +530,351 @@ def reconcile_all(db: Session, *, at: datetime | None = None) -> int:
     if repaired:
         db.commit()
     return repaired
+
+
+# --- Read path (§7, §10.1) ---------------------------------------------------
+
+# Whitelist for stuck[]: the statuses in which a task is still expected to move.
+# One rule excludes done, deleted and parked at once (§10.1).
+STUCK_STATUSES = frozenset(
+    {TaskStatus.backlog.value, TaskStatus.todo.value, TaskStatus.in_progress.value}
+)
+
+
+def _load_events(db: Session) -> dict[int, list[Ev]]:
+    """§7: the single journal query, grouped per task.
+
+    Values, not ORM objects: R3 clamps `at`, and a dirty ORM attribute would be
+    written back into an append-only table by the next commit in the same request
+    (POST /ai/insights logs usage and commits). Six columns, five Ev fields —
+    task_id becomes the dict key.
+    """
+    rows = db.execute(
+        select(
+            TaskEvent.task_id,
+            TaskEvent.id,
+            TaskEvent.at,
+            TaskEvent.status,
+            TaskEvent.project_id,
+            TaskEvent.source,
+        ).order_by(TaskEvent.task_id, TaskEvent.id)
+    ).all()
+    by_task: dict[int, list[Ev]] = defaultdict(list)
+    for task_id, *rest in rows:
+        by_task[task_id].append(Ev(*rest))
+    return by_task
+
+
+def latest_estimates(db: Session, task_ids: list[int]) -> dict[int, str | None]:
+    """Winning estimate per task: the row with the highest id, tombstone -> None.
+
+    "No rows at all" and "the last row is a tombstone" are indistinguishable from
+    the outside, and that is the contract: TaskOut.estimate is null in both (§9.1).
+    """
+    if not task_ids:
+        return {}
+    rows = db.execute(
+        select(TaskEstimate.task_id, TaskEstimate.bucket)
+        .where(TaskEstimate.task_id.in_(task_ids))
+        .order_by(TaskEstimate.task_id, TaskEstimate.id)
+    ).all()
+    latest: dict[int, str | None] = dict.fromkeys(task_ids, None)
+    for task_id, bucket in rows:  # ascending id: the last row of a task wins
+        latest[task_id] = bucket or None
+    return latest
+
+
+def _prognostic_estimates(db: Session) -> dict[int, str]:
+    """§8.1 rule 3: the winning estimate among before_work rows, tombstones dropped.
+
+    Never compares task_estimates.id with task_events.id — two independent
+    sequences (§3.2); the flag frozen at write time is the only valid witness.
+    """
+    rows = db.execute(
+        select(TaskEstimate.task_id, TaskEstimate.bucket)
+        .where(TaskEstimate.before_work.is_(True))
+        .order_by(TaskEstimate.task_id, TaskEstimate.id)
+    ).all()
+    out: dict[int, str] = {}
+    for task_id, bucket in rows:
+        if bucket:
+            out[task_id] = bucket
+        else:
+            out.pop(task_id, None)  # winning tombstone: this task has no forecast
+    return out
+
+
+def _is_untracked(events: list[Ev]) -> bool:
+    """coverage.untracked_tasks (§7.1 R2): a non-live event at or after the first
+    in_progress. A task that was never in_progress is NOT counted here — the rule
+    cut it off from nothing."""
+    first = next((e for e in events if e.status == TaskStatus.in_progress.value), None)
+    if first is None:
+        return False
+    return any(e.source != "live" and e.id >= first.id for e in events)
+
+
+def _observation(task_id: int, tt: TaskTime, bucket: str) -> Observation | None:
+    """§8.1: one task's journal -> one corpus observation, or None.
+
+    Rule 1 is tt.tracked, rule 2 is the presence of a `done` span, rule 4 sums only
+    the spells that STARTED before the first `done` (work after a reopen is a new
+    task and must not be hung on the old forecast). The observation is indivisible
+    and goes to the project holding the majority of those seconds (§8.3); on a tie,
+    to the project of the last in_progress span that entered the sum.
+    """
+    if not tt.tracked:
+        return None
+    first_done = next((s.start for s in tt.spans if s.status == TaskStatus.done.value), None)
+    if first_done is None:
+        return None
+    per_project: dict[int | None, float] = defaultdict(float)
+    last_project: int | None = None
+    total = 0.0
+    for spell in tt.spells:
+        if not spell.spans or spell.spans[0].start >= first_done:
+            continue
+        for span in spell.spans:
+            seconds = (span.end - span.start).total_seconds() * span.factor
+            total += seconds
+            per_project[span.project_id] += seconds
+            last_project = span.project_id
+    if total < MIN_SAMPLE_SECONDS:
+        return None
+    best = max(per_project.values())
+    tied = [pid for pid, value in per_project.items() if value == best]
+    project_id = last_project if last_project in tied else tied[0]
+    return Observation(task_id=task_id, bucket=bucket, seconds=int(total), project_id=project_id)
+
+
+def compute(db: Session, *, days: int = 30, now: datetime | None = None) -> AnalyticsOut:
+    """The read path (§7). One journal query, a pure fold per task, then the
+    five-step pipeline of §7.4: fold -> spells -> factor -> clip -> aggregate.
+
+    The window touches retro sums ONLY. Calibration, stuck[], running[] and every
+    coverage counter are computed over the whole history (§7.4).
+    """
+    now = now or utcnow()
+    window_start = now - timedelta(seconds=days * 86400)
+    by_task = _load_events(db)
+    prognosis = _prognostic_estimates(db)
+
+    # Segment = project. A snapshot without a project cannot happen (tasks.project_id
+    # is NOT NULL); dropping such a span keeps the §8.4 invariant true by construction.
+    closed_by_project: dict[int, float] = defaultdict(float)
+    open_by_project: dict[int, float] = defaultdict(float)
+    deleted_by_project: dict[int, float] = defaultdict(float)
+    corpus: list[Observation] = []
+    seeded = untracked = drift = capped = anomalies = 0
+    stuck_rows: list[tuple[int, str, float, int]] = []
+    running_rows: list[tuple[int, int, int]] = []
+
+    for task_id, events in by_task.items():
+        tt = fold(events, now)
+        anomalies += len(tt.anomalies)
+        sources = {e.source for e in events}
+        seeded += "seed" in sources
+        drift += "drift" in sources
+        untracked += _is_untracked(events)
+        # §8.4: a task is deleted iff its journal carries a `deleted` event. No filter
+        # on `tasks` anywhere in the read path (§7).
+        task_deleted = any(e.status == EVENT_STATUS_DELETED for e in events)
+
+        for spell in tt.spells:
+            if spell.closed and spell.spans and spell.spans[0].factor < 1.0:
+                capped += 1
+            if task_deleted:
+                target = deleted_by_project
+            else:
+                target = closed_by_project if spell.closed else open_by_project
+            for span in clip(list(spell.spans), window_start, now):
+                if span.project_id is None:
+                    continue
+                target[span.project_id] += (span.end - span.start).total_seconds() * span.factor
+
+        forecast = prognosis.get(task_id)
+        if forecast is not None:
+            observation = _observation(task_id, tt, forecast)
+            if observation is not None:
+                corpus.append(observation)
+
+        if not tt.spans or task_deleted:  # §8.4: stuck[] and running[] exclude deleted
+            continue
+        last = tt.spans[-1]
+        if last.status in STUCK_STATUSES:
+            stuck_days = (now - last.start).total_seconds() / 86400
+            if stuck_days > STUCK_DAYS:
+                stuck_rows.append((task_id, last.status, stuck_days, len(tt.spells)))
+        if last.status == TaskStatus.in_progress.value:
+            open_total = 0.0
+            closed_total = 0.0
+            for spell in tt.spells:
+                seconds = sum((s.end - s.start).total_seconds() * s.factor for s in spell.spans)
+                if spell.closed:
+                    closed_total += seconds
+                else:
+                    open_total += seconds
+            running_rows.append((task_id, int(open_total), int(closed_total)))
+
+    buckets = calibrate(corpus)
+    inversions = find_inversions(buckets)
+    minutes_by_bucket = {b.bucket: b.minutes for b in buckets}
+
+    # Denominator is the FIXED seed ladder, never the recalibrated one (§3.3):
+    # median(actual / median(actual)) collapses to 1.0 by construction.
+    ratios = [o.seconds / 60 / SEED_BUCKET_MINUTES[o.bucket] for o in corpus]
+    board_factor = statistics.median_low(ratios) if len(ratios) >= MIN_SAMPLES else None
+
+    # Deleted minutes never get a ProjectStat row (§8.4); corpus projects do, so that
+    # factor/samples survive a window that clipped every one of their minutes away.
+    project_ids = set(closed_by_project) | set(open_by_project)
+    project_ids |= {o.project_id for o in corpus if o.project_id is not None}
+    labels: dict[int, tuple[str, str]] = {}
+    if project_ids:
+        labels = {
+            pid: (name, color)
+            for pid, name, color in db.execute(
+                select(Project.id, Project.name, Project.color).where(Project.id.in_(project_ids))
+            )
+        }
+
+    projects: list[ProjectStat] = []
+    for pid in sorted(project_ids):
+        # A snapshot outlives its project (§7.2): no FK, so this must never KeyError.
+        name, color = labels.get(pid, ("проект удалён", "#6b7280"))
+        segment = [o for o in corpus if o.project_id == pid]
+        rs = [o.seconds / 60 / SEED_BUCKET_MINUTES[o.bucket] for o in segment]
+        factor = statistics.median_low(rs) if len(rs) >= MIN_SEGMENT_SAMPLES else None
+        projects.append(
+            ProjectStat(
+                project_id=pid,
+                project=name,
+                color=color,
+                closed_minutes=round(closed_by_project.get(pid, 0.0) / 60),
+                open_minutes=round(open_by_project.get(pid, 0.0) / 60),
+                factor=factor,
+                # The factor check comes FIRST: on a board of ~30 tasks a segment
+                # below MIN_SEGMENT_SAMPLES is the norm, and None / board_factor
+                # would be a TypeError, i.e. a 500 on GET /analytics (§8.3).
+                relative=(factor / board_factor if factor is not None and board_factor else None),
+                samples=len(rs),
+            )
+        )
+
+    label_ids = {row[0] for row in stuck_rows} | {row[0] for row in running_rows}
+    titles: dict[int, str] = {}
+    if label_ids:
+        titles = {
+            tid: title
+            for tid, title in db.execute(select(Task.id, Task.title).where(Task.id.in_(label_ids)))
+        }
+    estimates = latest_estimates(db, [row[0] for row in running_rows])
+
+    stuck = [
+        StuckTask(task_id=tid, title=titles[tid], status=status, days=round(value, 2), spells=n)
+        for tid, status, value, n in stuck_rows
+        if tid in titles
+    ]
+    stuck.sort(key=lambda s: s.days, reverse=True)
+
+    running: list[RunningTask] = []
+    for tid, open_seconds, closed_seconds in running_rows:
+        if tid not in titles:
+            continue
+        estimate = estimates.get(tid)
+        predicted = minutes_by_bucket.get(estimate) if estimate else None
+        running.append(
+            RunningTask(
+                task_id=tid,
+                title=titles[tid],
+                open_seconds=open_seconds,
+                closed_seconds=closed_seconds,
+                predicted_minutes=predicted,
+                over=(open_seconds / 60 / predicted if predicted else None),
+            )
+        )
+    running.sort(key=lambda r: r.open_seconds, reverse=True)
+
+    return AnalyticsOut(
+        coverage=Coverage(
+            as_of=now,
+            window_days=days,
+            seeded_tasks=seeded,
+            untracked_tasks=untracked,
+            tracked_tasks=len(by_task) - untracked,
+            drift_repaired=drift,
+            capped_spells=capped,
+            clock_anomalies=anomalies,
+            corpus_size=len(corpus),
+        ),
+        board_factor=board_factor,
+        # Board minutes are the SUM of segment minutes, not a separate rounding of
+        # board seconds: that is what makes sum(p.closed_minutes) == closed_minutes
+        # true by construction on fractional cases (§7.4).
+        closed_minutes=sum(p.closed_minutes for p in projects),
+        open_minutes=sum(p.open_minutes for p in projects),
+        deleted_minutes=sum(round(value / 60) for value in deleted_by_project.values()),
+        inversions=inversions,
+        buckets=buckets,
+        projects=projects,
+        stuck=stuck,
+        running=running,
+    )
+
+
+def recent_finished_examples(db: Session, *, limit: int = 6) -> list[tuple[str, str, str, int]]:
+    """Up to `limit` CORPUS OBSERVATIONS (§8.1), most recent first: (title, project,
+    bucket, minutes).
+
+    Only a corpus observation has both halves of the prompt line: the bucket is a
+    FORECAST (before_work), and the minutes are the very number that goes into the
+    median — including the R7 cap and the exclusion of spells started after the
+    first `done`. A task that is not admitted is under-measured by construction
+    (seeding stamps the start of tracking, not the start of work), and its line
+    would read "estimated L, actually 3 min" — the exact signal §3.3 forbids.
+
+    Ordering is by the id of the task's LAST `done` event: id, not at (§3.2).
+    Soft-deleted tasks are included (§8.4); no recency window (§7.4).
+    """
+    by_task = _load_events(db)
+    prognosis = _prognostic_estimates(db)
+    now = utcnow()
+    scored: list[tuple[int, Observation]] = []
+    for task_id, events in by_task.items():
+        forecast = prognosis.get(task_id)
+        if forecast is None:
+            continue
+        observation = _observation(task_id, fold(events, now), forecast)
+        if observation is None:
+            continue
+        done_id = max(e.id for e in events if e.status == TaskStatus.done.value)
+        scored.append((done_id, observation))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    top = [observation for _, observation in scored[:limit]]
+    if not top:
+        return []
+
+    titles = {
+        tid: title
+        for tid, title in db.execute(
+            select(Task.id, Task.title).where(Task.id.in_([o.task_id for o in top]))
+        )
+    }
+    pids = [o.project_id for o in top if o.project_id is not None]
+    names: dict[int, str] = {}
+    if pids:
+        names = {
+            pid: name
+            for pid, name in db.execute(
+                select(Project.id, Project.name).where(Project.id.in_(pids))
+            )
+        }
+    out: list[tuple[str, str, str, int]] = []
+    for o in top:
+        if o.task_id not in titles:  # rule 5: the task still physically exists
+            continue
+        project = names.get(o.project_id, "проект удалён") if o.project_id is not None else "—"
+        # max(1, ...) is redundant after rule 4 but kept deliberately: the line
+        # "actually 0 min" is unacceptable in a prompt unconditionally.
+        out.append((titles[o.task_id], project, o.bucket, max(1, round(o.seconds / 60))))
+    return out

@@ -13,7 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.api import ai, auth, projects, tasks
+from app.api import ai, analytics, auth, projects, tasks
 from app.bootstrap import init_db
 from app.config import get_settings
 from app.db import get_session_factory
@@ -194,7 +194,7 @@ def create_app() -> FastAPI:
     def healthz() -> dict:
         return {"ok": True}
 
-    for router in (auth.router, projects.router, tasks.router, ai.router):
+    for router in (auth.router, projects.router, tasks.router, ai.router, analytics.router):
         app.include_router(router, prefix="/api/v1")
 
     @app.exception_handler(Exception)

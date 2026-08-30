@@ -148,3 +148,60 @@ class BucketCalibration(BaseModel):
     observed_minutes: int | None
     samples: int
     calibrated: bool
+
+
+class Coverage(BaseModel):
+    as_of: datetime  # подпись «данные на такое-то время»; для арифметики не использовать
+    window_days: int  # окно ТОЛЬКО ретро-сумм (§7.4)
+    seeded_tasks: int  # были событием source == "seed" — существовали до замеров
+    untracked_tasks: int  # отсечены правилом допуска R2 (§7.1)
+    tracked_tasks: int  # len(by_task) − untracked_tasks, считается ПО ЖУРНАЛУ
+    drift_repaired: int  # были событием source == "drift" (§5.4 п.2)
+    capped_spells: int  # ЗАКРЫТЫХ заходов обрезано по MAX_SPELL_SECONDS
+    clock_anomalies: int
+    corpus_size: int  # наблюдений в корпусе, по всей истории
+
+
+class ProjectStat(BaseModel):
+    """closed_minutes/open_minutes — по СНИМКАМ пролётов, factor/samples — по
+    НАБЛЮДЕНИЯМ (§8.3). У задачи, работавшейся в двух проектах, эти две группы
+    полей законно относятся к разным популяциям."""
+
+    project_id: int
+    project: str  # "проект удалён" для осиротевшего снимка (§7.2)
+    color: str
+    closed_minutes: int
+    open_minutes: int  # НИКОГДА не складывается с closed
+    factor: float | None
+    relative: float | None
+    samples: int
+
+
+class StuckTask(BaseModel):
+    task_id: int
+    title: str
+    status: str  # статус ПОСЛЕДНЕГО события ∈ {backlog, todo, in_progress}
+    days: float  # длительность ТЕКУЩЕЙ резиденции, окном не ограничена
+    spells: int  # заходов за всю историю задачи
+
+
+class RunningTask(BaseModel):
+    task_id: int
+    title: str
+    open_seconds: int  # ТОЛЬКО текущий открытый заход, без потолка (R7)
+    closed_seconds: int  # закрытые заходы этой же задачи, с потолком
+    predicted_minutes: int | None
+    over: float | None  # open_seconds / 60 / predicted_minutes
+
+
+class AnalyticsOut(BaseModel):
+    coverage: Coverage
+    board_factor: float | None
+    closed_minutes: int  # СУММА ProjectStat.closed_minutes (§7.4)
+    open_minutes: int
+    deleted_minutes: int  # дизъюнктно с closed_minutes и со всеми ProjectStat
+    inversions: list[str]  # [] когда лестница монотонна, никогда null
+    buckets: list[BucketCalibration]
+    projects: list[ProjectStat]
+    stuck: list[StuckTask]
+    running: list[RunningTask]
