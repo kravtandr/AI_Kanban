@@ -22,6 +22,7 @@ import StatsModal from "../components/StatsModal";
 import { TaskCardView } from "../components/TaskCard";
 import TaskContextMenu from "../components/TaskContextMenu";
 import TaskModal from "../components/TaskModal";
+import { invalidateBoard } from "../lib/invalidateBoard";
 import { findProjectByName } from "../lib/projectMenu";
 import type { Priority, Status, Task } from "../types";
 import { STATUSES } from "../types";
@@ -169,7 +170,7 @@ export default function BoardPage() {
       // Инвалидируем только когда эта мутация — последняя: иначе refetch
       // среди быстрых перетаскиваний вернёт устаревшее состояние
       if (queryClient.isMutating({ mutationKey: MOVE_MUTATION_KEY }) === 1) {
-        queryClient.invalidateQueries({ queryKey: ["tasks"] });
+        invalidateBoard(queryClient);
       }
     },
   });
@@ -177,10 +178,7 @@ export default function BoardPage() {
   const setProjectMutation = useMutation({
     mutationFn: ({ id, projectId }: { id: number; projectId: number }) =>
       api.patchTask(id, { project_id: projectId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-    },
+    onSuccess: () => invalidateBoard(queryClient),
   });
 
   /** Создать проект и сразу перенести в него задачу.

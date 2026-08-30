@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import { fmtDur } from "../lib/duration";
 import type { StuckTask, Task } from "../types";
@@ -33,6 +33,16 @@ export default function StatsModal({ tasks, budgetHours, onBudgetChange, onClose
   // Единственное, что тратит токены. Мутация, а не запрос: при загрузке
   // страницы она не срабатывает никогда (NFR-6, §12.2 п.8).
   const insights = useMutation({ mutationFn: () => api.insights(days) });
+
+  // insights.data переживает смену периода (мутация не завязана на days), а
+  // блоки 1-7 уже пересчитались на новый период — без сброса абзац AI молча
+  // продолжал бы описывать старое окно рядом с новыми числами.
+  useEffect(() => {
+    insights.reset();
+    // insights — новый объект на каждый рендер (useMutation), а не стабильный
+    // ref; в зависимостях он вызвал бы сброс на каждый чужой ре-рендер модалки
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days]);
 
   const data = query.data;
   const buckets = data?.buckets ?? [];

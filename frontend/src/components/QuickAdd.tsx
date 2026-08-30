@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
 import { formatDue } from "../lib/dates";
+import { invalidateBoard } from "../lib/invalidateBoard";
 import { appendTranscript, useDictation } from "../lib/useDictation";
 import type { Project } from "../types";
 import { PRIORITIES } from "../types";
@@ -240,8 +241,7 @@ export default function QuickAdd({ projects }: Props) {
         ai_meta: item.aiOk ? { source_text: item.text } : undefined,
       });
       setItems((prev) => prev.filter((it) => it.id !== item.id));
-      queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      invalidateBoard(queryClient);
     } catch {
       patchItem(item.id, { status: "ready", aiError: "не удалось создать" });
     }

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { api } from "../api";
+import { invalidateBoard } from "../lib/invalidateBoard";
 import type { Project, Task } from "../types";
 import Modal from "./Modal";
 import TaskForm, { parseTags, type TaskFormValues } from "./TaskForm";
@@ -34,10 +35,7 @@ export default function TaskModal({ task, projects, onClose }: Props) {
   const titleRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["tasks"] });
-    queryClient.invalidateQueries({ queryKey: ["projects"] });
-  };
+  const invalidate = () => invalidateBoard(queryClient);
 
   // PATCH шлёт только изменённые поля: полный снапшот затирал бы
   // конкурентные правки MCP-агентов (FR-4.6).

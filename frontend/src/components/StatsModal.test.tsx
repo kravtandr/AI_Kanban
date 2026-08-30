@@ -259,6 +259,28 @@ describe("StatsModal", () => {
     expect(screen.getByText(/факты, которые видел ai/i)).toBeInTheDocument();
   });
 
+  it("смена периода после «объяснить» сбрасывает старый ответ AI", async () => {
+    vi.spyOn(api, "analytics").mockResolvedValue(FULL);
+    vi.spyOn(api, "insights").mockResolvedValue({
+      data: FULL,
+      facts: "buckets: S=60",
+      text: "Текст про 30 дней.",
+      ai_ok: true,
+      ai_error: null,
+    });
+    open();
+
+    await screen.findByText(/по факту 60м/);
+    await userEvent.click(screen.getByRole("button", { name: /объяснить/i }));
+    expect(await screen.findByText(/текст про 30 дней/i)).toBeInTheDocument();
+
+    // Меняем период на 7 дней: старый ответ AI описывал 30 и обязан исчезнуть,
+    // а не остаться висеть рядом с блоками, которые уже пересчитались на 7.
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Период" }), "7");
+
+    expect(screen.queryByText(/текст про 30 дней/i)).toBeNull();
+  });
+
   it("план на сегодня набирается из уже загруженных задач, без запроса", async () => {
     vi.spyOn(api, "analytics").mockResolvedValue(FULL);
     open();

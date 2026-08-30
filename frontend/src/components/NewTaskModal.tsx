@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { invalidateBoard } from "../lib/invalidateBoard";
 import type { Project, Status } from "../types";
 import { STATUSES } from "../types";
 import Modal from "./Modal";
@@ -68,8 +69,7 @@ export default function NewTaskModal({ status, projects, onClose }: Props) {
         source: "manual",
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      invalidateBoard(queryClient);
       onClose();
     },
   });

@@ -146,7 +146,7 @@ export default function TaskForm({
             onChange={(e) => set({ estimate: e.target.value })}
             className="input"
           >
-            {/* ⌀ — полноценное значение, а не placeholder: пустой оценка
+            {/* ⌀ — полноценное значение, а не placeholder: пустая оценка
               бывает штатно, и в PATCH она превращается в clear_estimate,
               а не в estimate: null (§12.3). */}
             <option value="">⌀ без оценки</option>
