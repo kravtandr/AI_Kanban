@@ -35,7 +35,7 @@
 
 ### 2.1 Добавить колонку в `tasks` невозможно без Alembic
 
-`bootstrap.py:21` — это весь механизм применения схемы:
+`bootstrap.py:25` — это весь механизм применения схемы:
 
 ```python
 Base.metadata.create_all(get_engine())
