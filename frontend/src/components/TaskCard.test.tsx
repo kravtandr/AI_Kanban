@@ -19,6 +19,7 @@ const TASK: Task = {
   created_at: "2026-07-26T00:00:00",
   updated_at: "2026-07-26T00:00:00",
   completed_at: null,
+  estimate: null,
 };
 
 const PROJECT: Project = {

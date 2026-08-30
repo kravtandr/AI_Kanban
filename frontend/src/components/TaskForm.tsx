@@ -2,7 +2,7 @@ import { useId, type Ref } from "react";
 import { appendTranscript, useDictation } from "../lib/useDictation";
 import MicButton from "./MicButton";
 import type { Priority, Project, Status } from "../types";
-import { PRIORITIES, STATUSES } from "../types";
+import { ESTIMATES, PRIORITIES, STATUSES } from "../types";
 
 export interface TaskFormValues {
   title: string;
@@ -12,6 +12,9 @@ export interface TaskFormValues {
   priority: Priority;
   tags: string;
   due_date: string;
+  /** Корзина оценки; `""` — это ⌀, «оценки нет». Не null: `<select>` не
+   * умеет хранить null, а снятие оценки едет отдельным флагом (§12.3). */
+  estimate: string;
 }
 
 interface Props {
@@ -130,6 +133,26 @@ export default function TaskForm({
             {PRIORITIES.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="eyebrow">Оценка</span>
+          <select
+            name="estimate"
+            aria-label="Оценка"
+            value={values.estimate}
+            onChange={(e) => set({ estimate: e.target.value })}
+            className="input"
+          >
+            {/* ⌀ — полноценное значение, а не placeholder: пустой оценка
+              бывает штатно, и в PATCH она превращается в clear_estimate,
+              а не в estimate: null (§12.3). */}
+            <option value="">⌀ без оценки</option>
+            {ESTIMATES.map((bucket) => (
+              <option key={bucket} value={bucket}>
+                {bucket}
               </option>
             ))}
           </select>

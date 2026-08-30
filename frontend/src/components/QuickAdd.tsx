@@ -34,6 +34,7 @@ function fallbackForm(text: string, projectId: number): TaskFormValues {
     priority: "medium",
     tags: "",
     due_date: "",
+    estimate: "",
   };
 }
 
@@ -207,6 +208,9 @@ export default function QuickAdd({ projects }: Props) {
           priority: resp.draft.priority,
           tags: resp.draft.tags.join(", "),
           due_date: resp.draft.due_date ?? "",
+          // Оценка приезжает из того же вызова /ai/draft; null рисуется как ⌀
+          // и никогда не подменяется угаданным бакетом (§12.3).
+          estimate: resp.draft.estimate ?? "",
         },
       });
     } catch (err) {
@@ -231,6 +235,7 @@ export default function QuickAdd({ projects }: Props) {
         priority: item.form.priority,
         tags: parseTags(item.form.tags),
         due_date: item.form.due_date || null,
+        estimate: item.form.estimate || null,
         source: item.aiOk ? "ai" : "manual",
         ai_meta: item.aiOk ? { source_text: item.text } : undefined,
       });

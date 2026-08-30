@@ -11,7 +11,7 @@ interface Props {
   onClose: () => void;
 }
 
-type PatchBody = Partial<Task> & { clear_due_date?: boolean };
+type PatchBody = Partial<Task> & { clear_due_date?: boolean; clear_estimate?: boolean };
 
 function toFormValues(task: Task): TaskFormValues {
   return {
@@ -22,6 +22,7 @@ function toFormValues(task: Task): TaskFormValues {
     priority: task.priority,
     tags: task.tags.join(", "),
     due_date: task.due_date ?? "",
+    estimate: task.estimate ?? "",
   };
 }
 
@@ -52,6 +53,11 @@ export default function TaskModal({ task, projects, onClose }: Props) {
     if (form.due_date !== initial.due_date) {
       if (form.due_date) patch.due_date = form.due_date;
       else patch.clear_due_date = true;
+    }
+    // Как due_date, а не как priority: priority пустым не бывает, а ⌀ бывает.
+    if (form.estimate !== initial.estimate) {
+      if (form.estimate) patch.estimate = form.estimate;
+      else patch.clear_estimate = true;
     }
     return patch;
   };

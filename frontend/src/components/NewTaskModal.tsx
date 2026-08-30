@@ -24,6 +24,7 @@ export default function NewTaskModal({ status, projects, onClose }: Props) {
       priority: "medium",
       tags: "",
       due_date: "",
+      estimate: "",
     };
   };
   const [initial, setInitial] = useState<TaskFormValues>(makeInitial);
@@ -63,6 +64,7 @@ export default function NewTaskModal({ status, projects, onClose }: Props) {
         priority: form.priority,
         tags: parseTags(form.tags),
         due_date: form.due_date || null,
+        estimate: form.estimate || null,
         source: "manual",
       }),
     onSuccess: () => {
