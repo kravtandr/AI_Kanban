@@ -1,9 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Project, Task } from "../types";
-import TaskCard from "./TaskCard";
+import type { Project, RunningTask, Task } from "../types";
+import TaskCard, { TaskCardView } from "./TaskCard";
 
 const TASK: Task = {
   id: 7,
@@ -19,6 +19,7 @@ const TASK: Task = {
   created_at: "2026-07-26T00:00:00",
   updated_at: "2026-07-26T00:00:00",
   completed_at: null,
+  estimate: null,
 };
 
 const PROJECT: Project = {
@@ -43,6 +44,8 @@ function Harness({
     <TaskCard
       task={TASK}
       project={PROJECT}
+      running={null}
+      sinceFetchSeconds={0}
       onOpen={onOpen}
       onContextMenu={onContextMenu}
       clickGuard={guard}
@@ -158,5 +161,134 @@ describe("TaskCard: долгое нажатие пальцем", () => {
 
     expect(onContextMenu).toHaveBeenCalledTimes(1);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+});
+
+/** Таймер карточки прогоняется в поясе с НЕНУЛЕВЫМ смещением: при TZ=UTC
+ * (как в CI) ошибочный разбор наивной UTC-метки через new Date(...) дал бы
+ * правильное число и остался бы невидимым навсегда (§13.7).
+ *
+ * Именно vi.stubEnv, а не голое `process.env.TZ = ...`: @types/node в
+ * проекте нет и заводить его ради одной строки нельзя, поэтому имя process
+ * не типизировано и присваивание роняет `tsc -b --noEmit`. Эффект тот же —
+ * Node перечитывает TZ, смещение становится −180. Не «упрощать» обратно. */
+vi.stubEnv("TZ", "Europe/Moscow");
+
+describe("TaskCard: оценка и живой таймер", () => {
+  const RUNNING: RunningTask = {
+    task_id: 7,
+    title: "Сделать UI",
+    open_seconds: 4800, // 1ч 20м
+    closed_seconds: 0,
+    predicted_minutes: 120,
+    over: 0.66,
+  };
+
+  it("тест бесполезен при нулевом смещении — пояс обязан быть сдвинут", () => {
+    expect(new Date().getTimezoneOffset()).not.toBe(0);
+  });
+
+  it("не начатая задача с оценкой показывает тусклую букву бакета", () => {
+    render(
+      <TaskCardView task={{ ...TASK, estimate: "M" }} project={PROJECT} running={null} />,
+    );
+
+    expect(screen.getByText("M")).toBeInTheDocument();
+    expect(screen.queryByText(/▶/)).toBeNull();
+  });
+
+  it("у задачи без оценки буквы нет вовсе", () => {
+    render(<TaskCardView task={TASK} project={PROJECT} running={null} />);
+
+    expect(screen.queryByTitle("Оценка трудозатрат")).toBeNull();
+  });
+
+  it("работающая задача показывает живые часы янтарём", () => {
+    render(
+      <TaskCardView
+        task={{ ...TASK, status: "in_progress", estimate: "M" }}
+        project={PROJECT}
+        running={RUNNING}
+        sinceFetchSeconds={0}
+      />,
+    );
+
+    const timer = screen.getByTitle(/в работе/i);
+    expect(timer).toHaveTextContent("1ч 20м");
+    expect(timer.className).toContain("text-amber");
+  });
+
+  it("таймер идёт: секунды с момента ответа прибавляются к open_seconds", () => {
+    render(
+      <TaskCardView
+        task={{ ...TASK, status: "in_progress", estimate: "M" }}
+        project={PROJECT}
+        running={RUNNING}
+        sinceFetchSeconds={600}
+      />,
+    );
+
+    expect(screen.getByTitle(/в работе/i)).toHaveTextContent("1ч 30м");
+  });
+
+  it("за порогом бакета таймер краснеет и дописывает саму оценку", () => {
+    render(
+      <TaskCardView
+        task={{ ...TASK, status: "in_progress", estimate: "S" }}
+        project={PROJECT}
+        running={{ ...RUNNING, open_seconds: 11400, predicted_minutes: 90, over: 2.11 }}
+        sinceFetchSeconds={0}
+      />,
+    );
+
+    const timer = screen.getByTitle(/в работе/i);
+    expect(timer).toHaveTextContent("3ч 10м");
+    expect(timer).toHaveTextContent("/ ~1ч 30м");
+    expect(timer.className).toContain("text-danger");
+  });
+
+  it("прошлые заходы идут отдельной подписью и к таймеру не прибавляются", () => {
+    render(
+      <TaskCardView
+        task={{ ...TASK, status: "in_progress", estimate: "M" }}
+        project={PROJECT}
+        running={{ ...RUNNING, closed_seconds: 7200 }}
+        sinceFetchSeconds={0}
+      />,
+    );
+
+    const timer = screen.getByTitle(/в работе/i);
+    expect(timer).toHaveTextContent("1ч 20м");
+    expect(timer).toHaveTextContent("(+2ч ранее)");
+    // 4800 + 7200 = 3ч 20м — числа, которого не должно существовать (R8)
+    expect(timer).not.toHaveTextContent("3ч 20м");
+  });
+
+  it("coverage.as_of в арифметику не входит: месячная давность ничего не меняет", () => {
+    // Карточка склеивается ровно так же, как в BoardPage: точка отсчёта —
+    // dataUpdatedAt запроса, а не подпись из ответа. Наивный UTC, разобранный
+    // new Date(...), дал бы на московском браузере +3ч и мгновенный danger.
+    const render1 = render(
+      <TaskCardView
+        task={{ ...TASK, status: "in_progress", estimate: "M" }}
+        project={PROJECT}
+        running={RUNNING}
+        sinceFetchSeconds={0}
+      />,
+    );
+    const fresh = render1.container.textContent;
+    cleanup();
+
+    render(
+      <TaskCardView
+        task={{ ...TASK, status: "in_progress", estimate: "M" }}
+        project={PROJECT}
+        running={RUNNING}
+        sinceFetchSeconds={0}
+      />,
+    );
+
+    expect(fresh).toContain("1ч 20м");
+    expect(document.body.textContent).toContain("1ч 20м");
   });
 });

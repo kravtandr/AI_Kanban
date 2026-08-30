@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.config import get_settings
 from app.db import get_db
-from app.schemas import DraftIn, DraftOut, TranscriptionOut
+from app.schemas import DraftIn, DraftOut, InsightsIn, InsightsOut, TranscriptionOut
 from app.services import ai as ai_svc
 from app.services import projects as project_svc
 from app.services import stt as stt_svc
@@ -50,6 +50,13 @@ def enhance(task_id: int, db: Session = Depends(get_db)):
         ai_ok=result.ok,
         ai_error=result.error,
     )
+
+
+@router.post("/insights", response_model=InsightsOut)
+def insights(body: InsightsIn, db: Session = Depends(get_db)):
+    # POST, а не GET: вызов тратит токены и обязан быть явным действием (NFR-6),
+    # которое react-query никогда не пре-фетчит.
+    return ai_svc.insights(db, days=body.days)
 
 
 # Read the upload in chunks: Content-Length is client-controlled and must not be

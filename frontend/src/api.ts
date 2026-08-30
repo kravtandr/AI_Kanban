@@ -1,4 +1,4 @@
-import type { DraftResponse, Project, Task, User } from "./types";
+import type { Analytics, DraftResponse, Insights, Project, Task, User } from "./types";
 
 const BASE = "/api/v1";
 
@@ -51,8 +51,10 @@ export const api = {
   tasks: (params: URLSearchParams) => request<Task[]>(`/tasks?${params.toString()}`),
   createTask: (body: Partial<Task> & { title: string; ai_meta?: unknown }) =>
     request<Task>("/tasks", { method: "POST", body: JSON.stringify(body) }),
-  patchTask: (id: number, body: Partial<Task> & { clear_due_date?: boolean }) =>
-    request<Task>(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  patchTask: (
+    id: number,
+    body: Partial<Task> & { clear_due_date?: boolean; clear_estimate?: boolean },
+  ) => request<Task>(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   moveTask: (id: number, status: string) =>
     request<Task>(`/tasks/${id}/move`, { method: "POST", body: JSON.stringify({ status }) }),
   deleteTask: (id: number) => request<void>(`/tasks/${id}`, { method: "DELETE" }),
@@ -67,4 +69,9 @@ export const api = {
     form.append("file", blob, blob.type.includes("mp4") ? "audio.mp4" : "audio.webm");
     return request<{ text: string }>("/ai/transcribe", { method: "POST", body: form });
   },
+  analytics: (days: number) => request<Analytics>(`/analytics?days=${days}`),
+  // POST, а не GET: инсайты тратят токены и обязаны быть явным действием,
+  // которое react-query не пре-фетчит (NFR-6, §10.1).
+  insights: (days: number) =>
+    request<Insights>("/ai/insights", { method: "POST", body: JSON.stringify({ days }) }),
 };

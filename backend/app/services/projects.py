@@ -1,8 +1,13 @@
-from sqlalchemy import func, select
+import logging
+
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Project, Task, TaskStatus, utcnow
+from app.models import Project, Task, TaskEstimate, TaskEvent, TaskStatus, utcnow
+from app.services import analytics
+
+log = logging.getLogger(__name__)
 
 DEFAULT_PROJECT_COLOR = "#6b7280"
 PROJECT_COLORS = [
@@ -128,7 +133,16 @@ def update_project(
     if description is not None:
         project.description = description
     if archived is not None and not project.is_inbox:
+        # Archiving changes neither status nor deleted_at, but it takes the card
+        # off the board: without a `parked` event the task's last event stays
+        # in_progress and its spell is open FOREVER, with nothing able to close
+        # it (§5.2). Unarchiving appends the reverse transition.
         project.archived_at = utcnow() if archived else None
+        db.flush()
+        for task in db.scalars(
+            select(Task).where(Task.project_id == project.id, Task.deleted_at.is_(None))
+        ).all():
+            analytics.record_state(db, task, at=project.archived_at or utcnow())
     db.commit()
     db.refresh(project)
     return project
@@ -145,6 +159,16 @@ def delete_project(db: Session, project_id: int, force: bool = False) -> None:
     )
     if task_count and not force:
         raise ProjectError(f"Project has {task_count} tasks; pass force=true to delete them")
+    # DELETE /projects/{id}?force=true deletes tasks bypassing delete_task, with
+    # no deleted_at. Rule: a hard delete destroys the measurement history too
+    # (§5.3). Scope is CURRENT membership: spans of a task that has since moved
+    # out of this project survive and keep pointing at a project_id that no
+    # longer resolves - handled by the dashboard, not forgotten (§7.2).
+    ids = [t.id for t in db.scalars(select(Task).where(Task.project_id == project_id))]
+    if ids:
+        db.execute(delete(TaskEvent).where(TaskEvent.task_id.in_(ids)))
+        db.execute(delete(TaskEstimate).where(TaskEstimate.task_id.in_(ids)))
+        log.warning("delete_project(force): destroying measurement history of %d task(s)", len(ids))
     for task in db.scalars(select(Task).where(Task.project_id == project_id)):
         db.delete(task)
     db.delete(project)

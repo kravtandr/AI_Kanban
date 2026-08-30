@@ -14,8 +14,14 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from app.config import get_settings
 from app.db import get_session_factory
-from app.models import TaskPriority, TaskSource, TaskStatus
+from app.models import EstimateBucket, TaskPriority, TaskSource, TaskStatus
 from app.services import ai as ai_svc
+
+# MANDATORY alias. @mcp.tool() returns the function itself, so `def analytics`
+# below rebinds this module-level name; without the alias analytics.compute()
+# would raise AttributeError: 'function' object has no attribute 'compute' on the
+# very first tool call. Same trick as ai_svc / project_svc / task_svc.
+from app.services import analytics as analytics_svc
 from app.services import projects as project_svc
 from app.services import tasks as task_svc
 
@@ -34,7 +40,7 @@ mcp = FastMCP(
 )
 
 
-def _task_dict(task) -> dict:
+def _task_dict(task, estimate: str | None = None) -> dict:
     return {
         "id": task.id,
         "title": task.title,
@@ -47,7 +53,29 @@ def _task_dict(task) -> dict:
         "source": task.source.value,
         "created_at": task.created_at.isoformat(),
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "estimate": estimate,
     }
+
+
+def _task_dict_with_estimate(db, task) -> dict:
+    """Single-task variant of _task_dict: one batched (n=1) call to
+    analytics.latest_estimates, same query as the list path (§9.1). An agent
+    that can WRITE an estimate must also be able to READ it back, or it has no
+    way to know one was already set and may re-estimate a task the owner
+    already sized."""
+    return _task_dict(task, analytics_svc.latest_estimates(db, [task.id]).get(task.id))
+
+
+def _bucket(value: str | None) -> EstimateBucket | None:
+    """Agent-supplied effort bucket. An unusable value is silently dropped, never
+    raised: a wrong estimate must not fail an otherwise valid create/update — the
+    same leniency TaskDraft applies to the LLM (§9.1)."""
+    if value is None:
+        return None
+    try:
+        return EstimateBucket(str(value).strip().upper())
+    except ValueError:
+        return None
 
 
 def list_projects_impl() -> list[dict]:
@@ -82,12 +110,15 @@ def list_tasks_impl(
             query=query,
             limit=limit,
         )
-        return [_task_dict(t) for t in tasks]
+        # One batched query for the whole page, not one per task (§9.1) --
+        # the same shape as api/tasks.py's _out_many.
+        estimates = analytics_svc.latest_estimates(db, [t.id for t in tasks])
+        return [_task_dict(t, estimates.get(t.id)) for t in tasks]
 
 
 def get_task_impl(task_id: int) -> dict:
     with get_session_factory()() as db:
-        return _task_dict(task_svc.get_task(db, task_id))
+        return _task_dict_with_estimate(db, task_svc.get_task(db, task_id))
 
 
 def create_task_impl(
@@ -98,6 +129,7 @@ def create_task_impl(
     tags: list[str] | None = None,
     due_date: str | None = None,
     auto_format: bool = False,
+    estimate: str | None = None,
 ) -> dict:
     with get_session_factory()() as db:
         ai_meta = None
@@ -139,8 +171,12 @@ def create_task_impl(
             due_date=date_type.fromisoformat(due_date) if due_date else None,
             source=TaskSource.mcp,
             ai_meta=ai_meta,
+            estimate=_bucket(estimate),
+            # Hard-wired, not a tool parameter: the agent does not get to choose
+            # whose estimate this is.
+            estimate_source="mcp",
         )
-        return _task_dict(task)
+        return _task_dict_with_estimate(db, task)
 
 
 def update_task_impl(
@@ -151,6 +187,8 @@ def update_task_impl(
     priority: str | None = None,
     tags: list[str] | None = None,
     due_date: str | None = None,
+    estimate: str | None = None,
+    clear_estimate: bool = False,
 ) -> dict:
     with get_session_factory()() as db:
         project_id = None
@@ -168,18 +206,21 @@ def update_task_impl(
             priority=TaskPriority(priority) if priority else None,
             tags=tags,
             due_date=date_type.fromisoformat(due_date) if due_date else None,
+            estimate=_bucket(estimate),
+            clear_estimate=clear_estimate,
+            estimate_source="mcp",
         )
-        return _task_dict(task)
+        return _task_dict_with_estimate(db, task)
 
 
 def move_task_impl(task_id: int, status: str) -> dict:
     with get_session_factory()() as db:
-        return _task_dict(task_svc.move_task(db, task_id, TaskStatus(status)))
+        return _task_dict_with_estimate(db, task_svc.move_task(db, task_id, TaskStatus(status)))
 
 
 def complete_task_impl(task_id: int) -> dict:
     with get_session_factory()() as db:
-        return _task_dict(task_svc.move_task(db, task_id, TaskStatus.done))
+        return _task_dict_with_estimate(db, task_svc.move_task(db, task_id, TaskStatus.done))
 
 
 def delete_task_impl(task_id: int) -> dict:
@@ -225,7 +266,9 @@ def get_task(task_id: int) -> dict:
     description=(
         "Create a task. Call this whenever the user or your work produces a follow-up "
         "action item. If project is omitted or auto_format=true, the tracker's LLM "
-        "formats the task and picks a project automatically."
+        "formats the task and picks a project automatically. estimate is the effort "
+        "bucket for focused work: XS, S, M, L or XL; call analytics to see what each "
+        "bucket costs on this board."
     )
 )
 def create_task(
@@ -236,11 +279,19 @@ def create_task(
     tags: list[str] | None = None,
     due_date: str | None = None,
     auto_format: bool = False,
+    estimate: str | None = None,
 ) -> dict:
-    return create_task_impl(title, description, project, priority, tags, due_date, auto_format)
+    return create_task_impl(
+        title, description, project, priority, tags, due_date, auto_format, estimate
+    )
 
 
-@mcp.tool(description="Update fields of an existing task. Only provided fields are changed.")
+@mcp.tool(
+    description=(
+        "Update fields of an existing task. Only provided fields are changed. "
+        "estimate sets the effort bucket (XS|S|M|L|XL); clear_estimate=true removes it."
+    )
+)
 def update_task(
     task_id: int,
     title: str | None = None,
@@ -249,8 +300,12 @@ def update_task(
     priority: str | None = None,
     tags: list[str] | None = None,
     due_date: str | None = None,
+    estimate: str | None = None,
+    clear_estimate: bool = False,
 ) -> dict:
-    return update_task_impl(task_id, title, description, project, priority, tags, due_date)
+    return update_task_impl(
+        task_id, title, description, project, priority, tags, due_date, estimate, clear_estimate
+    )
 
 
 @mcp.tool(description="Move a task to another kanban column (change its status).")
@@ -281,3 +336,21 @@ def delete_task(task_id: int) -> dict:
 )
 def daily_summary(date: str | None = None) -> dict:
     return daily_summary_impl(date)
+
+
+def analytics_impl(days: int = 30) -> dict:
+    # MCP has no Query validation, so the window is clamped explicitly (§7.4).
+    days = max(1, min(int(days), 3650))
+    with get_session_factory()() as db:
+        return analytics_svc.compute(db, days=days).model_dump(mode="json")
+
+
+@mcp.tool(
+    description=(
+        "Measured effort statistics for this board: what each estimate bucket actually "
+        "costs in minutes, which projects run over their estimates, which tasks are stuck "
+        "and where the time went. Call this before estimating work, and for retrospectives."
+    )
+)
+def analytics(days: int = 30) -> dict:
+    return analytics_impl(days)

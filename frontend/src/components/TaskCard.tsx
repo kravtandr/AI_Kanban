@@ -1,22 +1,44 @@
 import { useDraggable } from "@dnd-kit/core";
 import { useRef, type MutableRefObject } from "react";
 import { formatDue, isOverdue } from "../lib/dates";
-import { PRIORITIES, type Project, type Task } from "../types";
+import { fmtDur } from "../lib/duration";
+import { PRIORITIES, type Project, type RunningTask, type Task } from "../types";
 
 interface ViewProps {
   task: Task;
   project: Project | undefined;
   overlay?: boolean;
+  /** Замер текущего захода из GET /analytics; null — задача не в работе
+   * либо аналитика недоступна (доска при этом работает полностью). */
+  running?: RunningTask | null;
+  /** Секунды, прошедшие с момента, когда пришёл ответ аналитики. Считает
+   * доска: (now − dataUpdatedAt) / 1000. Обе величины — часы браузера,
+   * поэтому расхождение часов с сервером в арифметику не течёт (§12.1). */
+  sinceFetchSeconds?: number;
 }
 
 /** Pure card markup — reused by the board card and the DragOverlay copy.
  * Карточка молчалива: заголовок и одна строка меты. Проект — тег с
  * заливкой в цвете проекта, теги и служебные подписи живут в модалке. */
-export function TaskCardView({ task, project, overlay = false }: ViewProps) {
+export function TaskCardView({
+  task,
+  project,
+  overlay = false,
+  running = null,
+  sinceFetchSeconds = 0,
+}: ViewProps) {
   const priority = PRIORITIES.find((p) => p.id === task.priority)!;
   const overdue = isOverdue(task.due_date, task.status);
   const showProject = project && !project.is_inbox;
-  const hasMeta = Boolean(priority.mark || task.due_date || showProject);
+
+  // Открытое и закрытое время не складываются НИКОГДА: таймер показывает
+  // только текущий заход, прошлые заходы идут отдельной подписью (R8).
+  const elapsed = running ? running.open_seconds + sinceFetchSeconds : null;
+  const budgetSeconds = running?.predicted_minutes ? running.predicted_minutes * 60 : null;
+  const over = elapsed !== null && budgetSeconds !== null && elapsed > budgetSeconds;
+  const overSuffix = over && budgetSeconds !== null ? ` / ~${fmtDur(budgetSeconds)}` : "";
+
+  const hasMeta = Boolean(priority.mark || task.due_date || showProject || task.estimate || running);
 
   return (
     <div
@@ -52,6 +74,26 @@ export function TaskCardView({ task, project, overlay = false }: ViewProps) {
               {formatDue(task.due_date)}
             </span>
           )}
+          {running ? (
+            <span
+              className={over ? "font-medium text-danger" : "text-amber"}
+              title={
+                budgetSeconds !== null
+                  ? `В работе; оценка ~${fmtDur(budgetSeconds)}`
+                  : "В работе"
+              }
+            >
+              <span aria-hidden="true">▶</span> {fmtDur(elapsed)}
+              {overSuffix}
+              {running.closed_seconds > 0 && ` (+${fmtDur(running.closed_seconds)} ранее)`}
+            </span>
+          ) : (
+            task.estimate && (
+              <span className="text-dim/70" title="Оценка трудозатрат">
+                {task.estimate}
+              </span>
+            )
+          )}
         </p>
       )}
     </div>
@@ -61,6 +103,8 @@ export function TaskCardView({ task, project, overlay = false }: ViewProps) {
 interface Props {
   task: Task;
   project: Project | undefined;
+  running: RunningTask | null;
+  sinceFetchSeconds: number;
   onOpen: (task: Task) => void;
   /** Вызов контекстного меню: правый клик, долгое нажатие или клавиша Menu. */
   onContextMenu: (task: Task, at: { x: number; y: number }) => void;
@@ -79,7 +123,15 @@ const LONG_PRESS_MS = 500;
  * срабатывает и то и другое. */
 const LONG_PRESS_MOVE_TOLERANCE_PX = 8;
 
-export default function TaskCard({ task, project, onOpen, onContextMenu, clickGuard }: Props) {
+export default function TaskCard({
+  task,
+  project,
+  running,
+  sinceFetchSeconds,
+  onOpen,
+  onContextMenu,
+  clickGuard,
+}: Props) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `task-${task.id}`,
     data: { task },
@@ -157,7 +209,12 @@ export default function TaskCard({ task, project, onOpen, onContextMenu, clickGu
         isDragging ? "opacity-30" : ""
       }`}
     >
-      <TaskCardView task={task} project={project} />
+      <TaskCardView
+        task={task}
+        project={project}
+        running={running}
+        sinceFetchSeconds={sinceFetchSeconds}
+      />
     </div>
   );
 }

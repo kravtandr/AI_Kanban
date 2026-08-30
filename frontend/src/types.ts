@@ -16,6 +16,10 @@ export const PRIORITIES: { id: Priority; title: string; mark: string; cls: strin
   { id: "urgent", title: "Срочно", mark: "‼", cls: "text-danger" },
 ];
 
+/** Корзины оценки трудозатрат. Пустая строка — «оценки нет» (⌀):
+ * в форме это отдельный пункт, в PATCH — флаг clear_estimate. */
+export const ESTIMATES = ["XS", "S", "M", "L", "XL"] as const;
+
 export interface Project {
   id: number;
   name: string;
@@ -40,6 +44,10 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  /** Зеркало TaskOut.estimate — поле ОБЯЗАТЕЛЬНОЕ, хотя значение бывает null:
+   * бэкенд отдаёт ключ в каждом ответе, а необязательность здесь скрыла бы
+   * забытую подстановку на сервере. */
+  estimate: string | null;
 }
 
 export interface TaskDraft {
@@ -50,6 +58,8 @@ export interface TaskDraft {
   priority: Priority;
   tags: string[];
   due_date: string | null;
+  /** null, когда заметка не даёт оснований для размера (§9.1). */
+  estimate: string | null;
 }
 
 export interface DraftResponse {
@@ -62,4 +72,78 @@ export interface DraftResponse {
 export interface User {
   id: number;
   username: string;
+}
+
+/** Зеркала схем аналитики (§10.1). Ни одна ISO-строка отсюда не разбирается
+ * браузером для арифметики: все длительности приходят целыми секундами или
+ * минутами, а coverage.as_of — поле подписи. */
+export interface Coverage {
+  as_of: string;
+  window_days: number;
+  seeded_tasks: number;
+  untracked_tasks: number;
+  tracked_tasks: number;
+  drift_repaired: number;
+  capped_spells: number;
+  clock_anomalies: number;
+  corpus_size: number;
+}
+
+export interface BucketCalibration {
+  bucket: string;
+  minutes: number;
+  seed_minutes: number;
+  observed_minutes: number | null;
+  samples: number;
+  calibrated: boolean;
+}
+
+export interface ProjectStat {
+  project_id: number;
+  project: string;
+  color: string;
+  closed_minutes: number;
+  open_minutes: number;
+  factor: number | null;
+  relative: number | null;
+  samples: number;
+}
+
+export interface StuckTask {
+  task_id: number;
+  title: string;
+  status: string;
+  days: number;
+  spells: number;
+}
+
+export interface RunningTask {
+  task_id: number;
+  title: string;
+  /** Только текущий открытый заход. С closed_seconds не складывается нигде. */
+  open_seconds: number;
+  closed_seconds: number;
+  predicted_minutes: number | null;
+  over: number | null;
+}
+
+export interface Analytics {
+  coverage: Coverage;
+  board_factor: number | null;
+  closed_minutes: number;
+  open_minutes: number;
+  deleted_minutes: number;
+  inversions: string[];
+  buckets: BucketCalibration[];
+  projects: ProjectStat[];
+  stuck: StuckTask[];
+  running: RunningTask[];
+}
+
+export interface Insights {
+  data: Analytics;
+  facts: string;
+  text: string;
+  ai_ok: boolean;
+  ai_error: string | null;
 }

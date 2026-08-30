@@ -1,11 +1,65 @@
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy.exc import IntegrityError
 
 from app import db as db_module
-from app.schemas import TaskDraft
+from app.schemas import AnalyticsOut, Coverage, ProjectStat, TaskDraft
 from app.services import ai as ai_svc
 from app.services import projects as project_svc
+
+
+def _analytics_with_projects(project_ids: list[int]) -> AnalyticsOut:
+    """Minimal AnalyticsOut with one ProjectStat per id, closed_minutes == id * 100
+    so the biggest time sink is always the HIGHEST id — the opposite of
+    compute()'s sort-by-project_id order (analytics.py:745)."""
+    projects = [
+        ProjectStat(
+            project_id=pid,
+            project=f"Project {pid}",
+            color="#000000",
+            closed_minutes=pid * 100,
+            open_minutes=0,
+            factor=None,
+            relative=None,
+            samples=0,
+        )
+        for pid in project_ids
+    ]
+    return AnalyticsOut(
+        coverage=Coverage(
+            as_of=datetime(2026, 1, 1),
+            window_days=30,
+            seeded_tasks=0,
+            untracked_tasks=0,
+            tracked_tasks=0,
+            drift_repaired=0,
+            capped_spells=0,
+            clock_anomalies=0,
+            corpus_size=0,
+        ),
+        board_factor=None,
+        closed_minutes=sum(p.closed_minutes for p in projects),
+        open_minutes=0,
+        deleted_minutes=0,
+        inversions=[],
+        buckets=[],
+        projects=projects,
+        stuck=[],
+        running=[],
+    )
+
+
+def test_render_facts_shows_the_biggest_time_sinks_not_the_lowest_ids():
+    """compute() emits `projects` sorted by project_id ascending
+    (analytics.py:745); _render_facts must not slice that order directly, or
+    the biggest consumer silently falls out of the prompt on a board with
+    more than 5 projects (finding #3)."""
+    data = _analytics_with_projects([1, 2, 3, 4, 5, 6, 7, 8, 9])
+
+    facts = ai_svc._render_facts(data)
+
+    assert "Project 9" in facts  # id 9 has the most closed_minutes (900)
+    assert "Project 1" not in facts  # id 1 has the least (100) and must be cut
 
 
 def test_draft_degrades_without_llm(auth_client):
