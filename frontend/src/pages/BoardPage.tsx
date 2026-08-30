@@ -35,6 +35,10 @@ function filtersFromParams(params: URLSearchParams): Filters {
 
 const MOVE_MUTATION_KEY = ["move-task"];
 
+/** Как часто двигаем «сейчас». 30 с — шаг живого таймера на карточке:
+ * чаще не нужно (минуты), реже — заметно отстаёт. */
+const TIMER_TICK_MS = 30_000;
+
 /** Мобильная drop-зона статуса: невидимые колонки (display:none) не могут
  * принять карточку, поэтому на время перетаскивания табы статусов
  * превращаются в цели для сброса. */
@@ -88,6 +92,23 @@ export default function BoardPage() {
   );
 
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: api.projects });
+
+  // Аналитика нужна доске ровно ради одного — живого таймера на карточках.
+  // Объектная сигнатура react-query v5, как у projectsQuery и tasksQuery
+  // рядом. Ошибка запроса доску не ломает: таймеров просто нет.
+  const analyticsQuery = useQuery({
+    queryKey: ["analytics", 30],
+    queryFn: () => api.analytics(30),
+    staleTime: 30_000,
+  });
+
+  // ОДИН интервал на всю доску, а не по одному на карточку: полсотни
+  // собственных таймеров будили бы React полсотни раз за тик.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), TIMER_TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   // Поиск дебаунсим: запрос уходит не на каждый символ, само поле ввода
   // остаётся контролируемым без задержки.
@@ -240,6 +261,16 @@ export default function BoardPage() {
   const projects = projectsQuery.data ?? [];
   const projectMap = new Map(projects.map((p) => [p.id, p]));
   const tasks = tasksQuery.data ?? [];
+  // Точка отсчёта — dataUpdatedAt самого запроса: epoch-миллисекунды по
+  // часам браузера. coverage.as_of участвовать в этой формуле НЕ имеет
+  // права — это поле подписи, и наивный UTC, разобранный new Date(...),
+  // дал бы на московском браузере +3ч (§12.1).
+  const analyticsUpdatedAt = analyticsQuery.dataUpdatedAt;
+  const sinceFetchSeconds = analyticsUpdatedAt ? (now - analyticsUpdatedAt) / 1000 : 0;
+  const runningByTask = useMemo(
+    () => new Map((analyticsQuery.data?.running ?? []).map((r) => [r.task_id, r])),
+    [analyticsQuery.data],
+  );
   const openTaskId = Number(searchParams.get("task")) || null;
   const openTask = openTaskId ? (tasks.find((t) => t.id === openTaskId) ?? null) : null;
 
@@ -434,6 +465,8 @@ export default function BoardPage() {
                   title={column.title}
                   tasks={tasks.filter((t) => t.status === column.id)}
                   projects={projectMap}
+                  running={runningByTask}
+                  sinceFetchSeconds={sinceFetchSeconds}
                   onOpen={openTaskById}
                   onContextMenu={(task, at) => setMenuFor({ task, at })}
                   onAdd={setCreateStatus}
@@ -447,6 +480,8 @@ export default function BoardPage() {
                 <TaskCardView
                   task={activeTask}
                   project={projectMap.get(activeTask.project_id)}
+                  running={runningByTask.get(activeTask.id) ?? null}
+                  sinceFetchSeconds={sinceFetchSeconds}
                   overlay
                 />
               )}
