@@ -18,6 +18,7 @@ import FilterBar, { activeFilterCount, type Filters } from "../components/Filter
 import NewProjectModal from "../components/NewProjectModal";
 import NewTaskModal from "../components/NewTaskModal";
 import QuickAdd from "../components/QuickAdd";
+import StatsModal from "../components/StatsModal";
 import { TaskCardView } from "../components/TaskCard";
 import TaskContextMenu from "../components/TaskContextMenu";
 import TaskModal from "../components/TaskModal";
@@ -62,6 +63,7 @@ export default function BoardPage() {
   const [createStatus, setCreateStatus] = useState<Status | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   // Контекстное меню и создание проекта — транзиентный UI, в URL не живут.
   const [menuFor, setMenuFor] = useState<{ task: Task; at: { x: number; y: number } } | null>(null);
   const [creatingProjectFor, setCreatingProjectFor] = useState<Task | null>(null);
@@ -82,6 +84,11 @@ export default function BoardPage() {
   // закрытие её замещает, иначе «назад» открыл бы модалку снова.
   const openTaskById = (task: Task) => updateParams((p) => p.set("task", String(task.id)), false);
   const closeTask = () => updateParams((p) => p.delete("task"));
+
+  // Бюджет плана на сегодня живёт в URL, как остальное состояние доски.
+  // Дефолт 4 ч; мусор в параметре молча деградирует в дефолт.
+  const budgetHours = Number(searchParams.get("budget")) || 4;
+  const setBudgetHours = (hours: number) => updateParams((p) => p.set("budget", String(hours)));
 
   // После drag браузер шлёт click по исходной карточке — гасим его,
   // чтобы перетаскивание не открывало модалку задачи.
@@ -317,6 +324,14 @@ export default function BoardPage() {
             <QuickAdd projects={projects} />
           </div>
           <button
+            onClick={() => setShowStats(true)}
+            aria-label="Статистика времени"
+            title="Статистика времени"
+            className="shrink-0 font-mono text-xs text-dim transition hover:text-ink"
+          >
+            время
+          </button>
+          <button
             onClick={() => setShowFilters((v) => !v)}
             aria-label={filterCount > 0 ? `Фильтры, активных: ${filterCount}` : "Фильтры"}
             aria-expanded={showFilters}
@@ -519,6 +534,14 @@ export default function BoardPage() {
         <NewProjectModal
           onCreate={(name) => createProjectAndMove(creatingProjectFor, name)}
           onClose={() => setCreatingProjectFor(null)}
+        />
+      )}
+      {showStats && (
+        <StatsModal
+          tasks={tasks}
+          budgetHours={budgetHours}
+          onBudgetChange={setBudgetHours}
+          onClose={() => setShowStats(false)}
         />
       )}
     </div>
