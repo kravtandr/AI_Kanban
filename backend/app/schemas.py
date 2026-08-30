@@ -238,3 +238,21 @@ class AnalyticsOut(BaseModel):
     projects: list[ProjectStat]
     stuck: list[StuckTask]
     running: list[RunningTask]
+
+
+class InsightsIn(BaseModel):
+    days: int = Field(default=30, ge=1, le=3650)
+
+
+class InsightsOut(BaseModel):
+    """AI-комментарий поверх измеренных чисел.
+
+    `data` заполнен ВСЕГДА — с LLM и без. `facts` — ровно тот текст, который увидела
+    модель: выдуманное число видно тем, что его нет в фактах (§11.3).
+    """
+
+    data: AnalyticsOut
+    facts: str
+    text: str = ""
+    ai_ok: bool
+    ai_error: str | None = None
