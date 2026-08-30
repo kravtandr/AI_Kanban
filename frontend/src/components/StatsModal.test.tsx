@@ -66,6 +66,28 @@ const FULL: Analytics = {
   ],
 };
 
+/** Отдельный набор с НЕНУЛЕВЫМ открытым временем на доске. FULL для этого не
+ * годится: там open_minutes = 0, и подмешивание его в знаменатель ничего не
+ * меняет арифметически (300 + 0 == 300) — нарушение осталось бы невидимым.
+ * Суммы проектов сходятся с досочными по обоим полям, как на бэкенде. */
+const WITH_OPEN: Analytics = {
+  ...EMPTY,
+  closed_minutes: 300,
+  open_minutes: 100,
+  projects: [
+    {
+      project_id: 3,
+      project: "Пасека",
+      color: "#f472b6",
+      closed_minutes: 300,
+      open_minutes: 100,
+      factor: null,
+      relative: null,
+      samples: 4,
+    },
+  ],
+};
+
 const TASKS: Task[] = [
   {
     id: 9,
@@ -167,6 +189,27 @@ describe("StatsModal", () => {
     await screen.findByText(/по удалённым задачам/i);
     const spent = screen.getByRole("region", { name: "Куда ушло время" });
     expect(within(spent).getByText(/по удалённым задачам/i)).toBeInTheDocument();
+  });
+
+  it("знаменатель процентов — closed_minutes, открытое время в него не подмешано", async () => {
+    vi.spyOn(api, "analytics").mockResolvedValue(WITH_OPEN);
+    open([]);
+
+    await screen.findByText(/ещё идёт/);
+    const spent = screen.getByRole("region", { name: "Куда ушло время" });
+
+    // 300 закрытых из 300 закрытых — ровно 100%. Подмешать в знаменатель
+    // 100 открытых, и то же самое число станет 75%: проверяем КОНКРЕТНУЮ
+    // ширину, а не факт существования полосы, иначе подмена не видна.
+    expect(within(spent).getByText(/· 100%/)).toBeInTheDocument();
+    const widths = [...spent.querySelectorAll<HTMLElement>('div[style*="width"]')].map(
+      (el) => el.style.width,
+    );
+    expect(widths[0]).toBe("100%");
+    // Открытое время — отдельная штриховка в масштабе закрытых (100 из 300)
+    // и отдельная подпись. Ни в одно число с закрытым оно не складывается.
+    expect(widths[1]).toBe("33%");
+    expect(within(spent).getByText(/ещё идёт: 1ч 40м/)).toBeInTheDocument();
   });
 
   it("работающая задача показывает открытое и прошлое время двумя числами", async () => {
