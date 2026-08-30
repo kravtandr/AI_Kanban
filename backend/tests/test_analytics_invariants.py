@@ -3,12 +3,16 @@
 lifespan в тестах НЕ запускается (§13.1), поэтому init_db() вызывается напрямую.
 """
 
+from datetime import timedelta
+
+import pytest
 from sqlalchemy import delete, select
 
 from app import db as db_module
 from app.bootstrap import init_db
-from app.models import Task, TaskEstimate, TaskEvent, TaskStatus
+from app.models import EstimateBucket, Task, TaskEstimate, TaskEvent, TaskStatus, utcnow
 from app.services import analytics
+from app.services import tasks as task_svc
 
 
 def _events(task_id: int) -> list[TaskEvent]:
@@ -115,3 +119,64 @@ def test_init_db_seeds_pre_existing_tasks(auth_client):
     init_db()
 
     assert [(e.status, e.source) for e in _events(task["id"])] == [("todo", "seed")]
+
+
+def _set_foreign_keys(enabled: str) -> None:
+    """PRAGMA foreign_keys — no-op внутри транзакции, поэтому ставится прямо на
+    DBAPI-соединении. StaticPool держит ровно одно соединение на весь тест, так что
+    значение действует и в сессиях."""
+    raw = db_module.get_engine().raw_connection()
+    try:
+        raw.driver_connection.execute(f"PRAGMA foreign_keys={enabled}")
+        actual = raw.driver_connection.execute("PRAGMA foreign_keys").fetchone()[0]
+    finally:
+        raw.close()
+    assert actual == (1 if enabled == "ON" else 0)
+
+
+@pytest.mark.parametrize("foreign_keys", ["ON", "OFF"])
+def test_purge_cascades_events(auth_client, foreign_keys):
+    """Явное удаление обязано работать независимо от каскада БД (§5.3)."""
+    task = _create(auth_client, title="Старая")
+    auth_client.post(f"/api/v1/tasks/{task['id']}/move", json={"status": "in_progress"})
+    with db_module.get_session_factory()() as db:
+        analytics.record_estimate(db, task["id"], EstimateBucket.m)
+        db.commit()
+    assert auth_client.delete(f"/api/v1/tasks/{task['id']}").status_code == 204
+    assert len(_events(task["id"])) == 3
+    assert len(_estimates(task["id"])) == 1
+
+    _set_foreign_keys(foreign_keys)
+    with db_module.get_session_factory()() as db:
+        stored = db.get(Task, task["id"])
+        assert stored is not None
+        stored.deleted_at = utcnow() - timedelta(days=31)
+        db.commit()
+
+    with db_module.get_session_factory()() as db:
+        assert task_svc.purge_deleted_tasks(db) == 1
+
+    with db_module.get_session_factory()() as db:
+        assert db.get(Task, task["id"]) is None
+    assert _events(task["id"]) == []
+    assert _estimates(task["id"]) == []
+
+
+@pytest.mark.parametrize("foreign_keys", ["ON", "OFF"])
+def test_delete_project_force_destroys_history(auth_client, foreign_keys):
+    project = auth_client.post("/api/v1/projects", json={"name": "Homelab"}).json()
+    task = _create(auth_client, title="Обновить caddy", project_id=project["id"])
+    auth_client.post(f"/api/v1/tasks/{task['id']}/move", json={"status": "in_progress"})
+    with db_module.get_session_factory()() as db:
+        analytics.record_estimate(db, task["id"], EstimateBucket.l)
+        db.commit()
+    assert len(_events(task["id"])) == 2
+
+    _set_foreign_keys(foreign_keys)
+    response = auth_client.delete(f"/api/v1/projects/{project['id']}?force=true")
+    assert response.status_code == 204, response.text
+
+    with db_module.get_session_factory()() as db:
+        assert db.get(Task, task["id"]) is None
+    assert _events(task["id"]) == []
+    assert _estimates(task["id"]) == []

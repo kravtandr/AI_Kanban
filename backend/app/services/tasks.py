@@ -1,11 +1,21 @@
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import EstimateBucket, Project, Task, TaskPriority, TaskSource, TaskStatus, utcnow
+from app.models import (
+    EstimateBucket,
+    Project,
+    Task,
+    TaskEstimate,
+    TaskEvent,
+    TaskPriority,
+    TaskSource,
+    TaskStatus,
+    utcnow,
+)
 from app.services import analytics
 from app.services.projects import get_inbox
 
@@ -188,6 +198,14 @@ def purge_deleted_tasks(db: Session) -> int:
     stale = list(
         db.scalars(select(Task).where(Task.deleted_at.is_not(None), Task.deleted_at < cutoff))
     )
+    # Hard delete destroys the measurement history too (§5.3). The rows go
+    # explicitly, with the FK cascade as a database-level backstop only: a
+    # restricting FK would kill this daily purge silently and forever, because
+    # _purge_loop swallows and logs exceptions (main.py:174-175).
+    ids = [task.id for task in stale]
+    if ids:
+        db.execute(delete(TaskEvent).where(TaskEvent.task_id.in_(ids)))
+        db.execute(delete(TaskEstimate).where(TaskEstimate.task_id.in_(ids)))
     for task in stale:
         db.delete(task)
     db.commit()
