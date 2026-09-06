@@ -110,6 +110,45 @@ class Task(Base):
     project: Mapped[Project] = relationship(back_populates="tasks")
 
 
+class ExpenseStatus(StrEnum):
+    recurring = "recurring"  # колонка «Регулярные»
+    wanted = "wanted"  # колонка «Хочу купить»
+    bought = "bought"  # колонка «Куплено»
+
+
+class ExpensePeriod(StrEnum):
+    day = "day"
+    month = "month"
+    quarter = "quarter"
+    year = "year"
+
+
+class Expense(Base):
+    """Планировщик трат (ADR-0009). Новая таблица: create_all создаёт её вместе с
+    энумами, Alembic не нужен. Ни одной ссылки на tasks — учёт времени трат не видит."""
+
+    __tablename__ = "expenses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    note: Mapped[str] = mapped_column(Text, default="")
+    amount: Mapped[int] = mapped_column(default=0)  # копейки, >= 0
+    status: Mapped[ExpenseStatus] = mapped_column(
+        Enum(ExpenseStatus), default=ExpenseStatus.wanted, index=True
+    )
+    period: Mapped[ExpensePeriod | None] = mapped_column(Enum(ExpensePeriod), nullable=True)
+    anchor_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    active: Mapped[bool] = mapped_column(default=True)
+    purchased_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    sort_order: Mapped[int] = mapped_column(default=0)
+    source: Mapped[TaskSource] = mapped_column(Enum(TaskSource), default=TaskSource.manual)
+    ai_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class LlmUsage(Base):
     __tablename__ = "llm_usage"
 
