@@ -131,3 +131,31 @@ def test_soft_delete_and_purge(db):
     db.commit()
     assert svc.purge_deleted_expenses(db) == 1
     assert db.get(Expense, e.id) is None
+
+
+def _snapshot(e):
+    return (e.title, e.amount, e.status, e.note, e.tags, e.active, e.purchased_at, e.sort_order)
+
+
+def test_update_title_none_is_noop(db):
+    """PATCH title=None — no-op, а не AttributeError на .strip() (ревью Task 2)."""
+    e = svc.create_expense(db, title="x", amount=1)
+    before = _snapshot(e)
+    updated = svc.update_expense(db, e.id, title=None)
+    assert _snapshot(updated) == before
+
+
+def test_update_amount_none_is_noop(db):
+    """PATCH amount=None — no-op, а не TypeError внутри _check_invariants (ревью Task 2)."""
+    e = svc.create_expense(db, title="x", amount=1)
+    before = _snapshot(e)
+    updated = svc.update_expense(db, e.id, amount=None)
+    assert _snapshot(updated) == before
+
+
+def test_update_status_none_is_noop(db):
+    """PATCH status=None — no-op, а не обход инварианта с падением на commit() (ревью Task 2)."""
+    e = svc.create_expense(db, title="x", amount=1)
+    before = _snapshot(e)
+    updated = svc.update_expense(db, e.id, status=None)
+    assert _snapshot(updated) == before

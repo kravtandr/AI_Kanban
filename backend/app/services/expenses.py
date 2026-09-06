@@ -187,6 +187,8 @@ def update_expense(db: Session, expense_id: int, **fields) -> Expense:
     for key, value in fields.items():
         if key not in _PATCHABLE:
             raise ExpenseError(f"Unknown field: {key}")
+        if value is None:
+            continue  # None = поле не пришло в патче, а не запись (§7.2, clear_period — отдельно)
         if key == "tags":
             value = normalize_tags(value)
         if key == "title":
