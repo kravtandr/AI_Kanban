@@ -13,13 +13,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.api import ai, analytics, auth, projects, tasks
+from app.api import ai, analytics, auth, expenses, projects, tasks
 from app.bootstrap import init_db
 from app.config import get_settings
 from app.db import get_session_factory
 from app.mcp_server import mcp
 from app.models import TokenKind
 from app.security import tokens_equal
+from app.services import expenses as expense_service
 from app.services import tasks as task_service
 from app.services.auth import verify_api_token
 
@@ -162,8 +163,11 @@ class McpTokenAuth:
 def _purge_deleted_tasks_once() -> None:
     with get_session_factory()() as db:
         purged = task_service.purge_deleted_tasks(db)
+        purged_expenses = expense_service.purge_deleted_expenses(db)
     if purged:
         log.info("Purged %d task(s) soft-deleted more than 30 days ago", purged)
+    if purged_expenses:
+        log.info("Purged %d expense(s) soft-deleted more than 30 days ago", purged_expenses)
 
 
 async def _purge_loop() -> None:
@@ -194,7 +198,14 @@ def create_app() -> FastAPI:
     def healthz() -> dict:
         return {"ok": True}
 
-    for router in (auth.router, projects.router, tasks.router, ai.router, analytics.router):
+    for router in (
+        auth.router,
+        projects.router,
+        tasks.router,
+        ai.router,
+        analytics.router,
+        expenses.router,
+    ):
         app.include_router(router, prefix="/api/v1")
 
     @app.exception_handler(Exception)
