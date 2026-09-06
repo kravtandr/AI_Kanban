@@ -1,0 +1,87 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import { api } from "../api";
+import { invalidateExpenses } from "../lib/invalidateExpenses";
+import { parseRub } from "../lib/money";
+import type { ExpenseStatus } from "../types";
+import ExpenseForm, { emptyExpenseForm, formToBody, type ExpenseFormValues } from "./ExpenseForm";
+import Modal from "./Modal";
+
+interface Props {
+  status: ExpenseStatus;
+  /** Предзаполнение из черновика LLM (ExpenseQuickAdd). */
+  initial?: ExpenseFormValues;
+  aiNote?: string | null;
+  source?: "manual" | "ai";
+  aiMeta?: unknown;
+  onClose: () => void;
+}
+
+export default function NewExpenseModal({
+  status, initial, aiNote = null, source = "manual", aiMeta, onClose,
+}: Props) {
+  const [form, setForm] = useState<ExpenseFormValues>(() => initial ?? emptyExpenseForm(status));
+  const [titleError, setTitleError] = useState<string | null>(null);
+  const [amountError, setAmountError] = useState<string | null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
+
+  const createMutation = useMutation({
+    mutationFn: () => api.createExpense({ ...formToBody(form), source, ai_meta: aiMeta }),
+    onSuccess: () => {
+      invalidateExpenses(queryClient);
+      onClose();
+    },
+  });
+
+  const submit = () => {
+    if (createMutation.isPending) return;
+    if (!form.title.trim()) {
+      setTitleError("Введите название");
+      titleRef.current?.focus();
+      return;
+    }
+    setTitleError(null);
+    if (parseRub(form.amount) === null) {
+      setAmountError("Введите сумму в рублях");
+      amountRef.current?.focus();
+      return;
+    }
+    setAmountError(null);
+    createMutation.mutate();
+  };
+
+  return (
+    <Modal onClose={onClose} onSubmit={submit} title="Новая трата">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+        className="flex flex-col gap-4"
+      >
+        {aiNote && <p className="rounded-lg bg-ai/10 px-3 py-2 text-xs text-ai">{aiNote}</p>}
+        <ExpenseForm
+          values={form}
+          onChange={setForm}
+          titleError={titleError}
+          amountError={amountError}
+          titleRef={titleRef}
+          amountRef={amountRef}
+        />
+        {createMutation.error instanceof Error && (
+          <p className="text-sm text-danger">{createMutation.error.message}</p>
+        )}
+        <div className="flex gap-2">
+          <button type="submit" className="btn-primary" disabled={createMutation.isPending}>
+            Создать
+          </button>
+          <button type="button" className="btn-ghost" onClick={onClose}>
+            Отмена
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
