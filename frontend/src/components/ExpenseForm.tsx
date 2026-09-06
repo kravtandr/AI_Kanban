@@ -72,16 +72,24 @@ interface Props {
   onChange: (values: ExpenseFormValues) => void;
   titleError?: string | null;
   amountError?: string | null;
+  /** Общий слот ошибки для «Дата списания»/«Дата покупки» — поля взаимно
+   * исключающие (статус один), поэтому на экране всегда виден максимум один
+   * из них и id не задваивается. */
+  dateError?: string | null;
   titleRef?: Ref<HTMLInputElement>;
   amountRef?: Ref<HTMLInputElement>;
+  anchorDateRef?: Ref<HTMLInputElement>;
+  purchasedAtRef?: Ref<HTMLInputElement>;
 }
 
 export default function ExpenseForm({
-  values, onChange, titleError = null, amountError = null, titleRef, amountRef,
+  values, onChange, titleError = null, amountError = null, dateError = null,
+  titleRef, amountRef, anchorDateRef, purchasedAtRef,
 }: Props) {
   const set = (patch: Partial<ExpenseFormValues>) => onChange({ ...values, ...patch });
   const titleErrId = useId();
   const amountErrId = useId();
+  const dateErrId = useId();
   const group = useId();
   const recurring = values.status === "recurring";
 
@@ -161,17 +169,23 @@ export default function ExpenseForm({
               ))}
             </select>
           </label>
-          <label className="block">
-            <span className="eyebrow">Дата списания</span>
-            <input
-              type="date"
-              aria-label="Дата списания"
-              required
-              value={values.anchor_date}
-              onChange={(e) => set({ anchor_date: e.target.value })}
-              className="input"
-            />
-          </label>
+          <div>
+            <label className="block">
+              <span className="eyebrow">Дата списания</span>
+              <input
+                ref={anchorDateRef}
+                type="date"
+                aria-label="Дата списания"
+                required
+                value={values.anchor_date}
+                onChange={(e) => set({ anchor_date: e.target.value })}
+                aria-invalid={dateError ? true : undefined}
+                aria-describedby={dateError ? dateErrId : undefined}
+                className="input"
+              />
+            </label>
+            {dateError && <span id={dateErrId} className="field-error">{dateError}</span>}
+          </div>
           <label className="col-span-2 flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -184,16 +198,22 @@ export default function ExpenseForm({
         </div>
       )}
       {values.status === "bought" && (
-        <label className="block">
-          <span className="eyebrow">Дата покупки</span>
-          <input
-            type="date"
-            aria-label="Дата покупки"
-            value={values.purchased_at}
-            onChange={(e) => set({ purchased_at: e.target.value })}
-            className="input"
-          />
-        </label>
+        <div>
+          <label className="block">
+            <span className="eyebrow">Дата покупки</span>
+            <input
+              ref={purchasedAtRef}
+              type="date"
+              aria-label="Дата покупки"
+              value={values.purchased_at}
+              onChange={(e) => set({ purchased_at: e.target.value })}
+              aria-invalid={dateError ? true : undefined}
+              aria-describedby={dateError ? dateErrId : undefined}
+              className="input"
+            />
+          </label>
+          {dateError && <span id={dateErrId} className="field-error">{dateError}</span>}
+        </div>
       )}
       <label className="block">
         <span className="eyebrow">Заметка · markdown</span>

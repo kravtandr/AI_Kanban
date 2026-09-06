@@ -23,8 +23,10 @@ export default function NewExpenseModal({
   const [form, setForm] = useState<ExpenseFormValues>(() => initial ?? emptyExpenseForm(status));
   const [titleError, setTitleError] = useState<string | null>(null);
   const [amountError, setAmountError] = useState<string | null>(null);
+  const [dateError, setDateError] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
+  const anchorDateRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
   const createMutation = useMutation({
@@ -49,6 +51,15 @@ export default function NewExpenseModal({
       return;
     }
     setAmountError(null);
+    // Ctrl/Cmd+Enter (Modal.tsx) вызывает onSubmit напрямую, минуя HTML5
+    // required у поля даты — без этой проверки сервер ответил бы 400 на
+    // `status: "recurring", anchor_date: null`, и UI показал бы сырую ошибку.
+    if (form.status === "recurring" && !form.anchor_date) {
+      setDateError("У регулярной траты нужна дата списания");
+      anchorDateRef.current?.focus();
+      return;
+    }
+    setDateError(null);
     createMutation.mutate();
   };
 
@@ -67,8 +78,10 @@ export default function NewExpenseModal({
           onChange={setForm}
           titleError={titleError}
           amountError={amountError}
+          dateError={dateError}
           titleRef={titleRef}
           amountRef={amountRef}
+          anchorDateRef={anchorDateRef}
         />
         {createMutation.error instanceof Error && (
           <p className="text-sm text-danger">{createMutation.error.message}</p>

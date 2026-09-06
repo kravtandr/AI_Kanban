@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { invalidateExpenses } from "../lib/invalidateExpenses";
 import { kopecksToInput, parseRub } from "../lib/money";
@@ -14,6 +14,14 @@ interface Props {
 }
 
 type PatchBody = Partial<Expense> & { clear_period?: boolean };
+
+/** Взвод «Точно удалить?» сам снимается через это время — иначе клик по
+ * забытой открытой модалке спустя долгое время удалил бы трату неожиданно. */
+const DELETE_CONFIRM_TIMEOUT_MS = 4000;
+/** Кнопка подтверждения — тот же DOM-узел, что и «Удалить»: двойной клик
+ * (один физический жест) бьёт по нему дважды почти мгновенно. Подтверждение
+ * раньше этого порога после взвода игнорируется как часть того же клика. */
+const DELETE_CONFIRM_THRESHOLD_MS = 400;
 
 function toFormValues(e: Expense): ExpenseFormValues {
   return {
@@ -34,14 +42,25 @@ export default function ExpenseModal({ expense, onClose }: Props) {
   const [form, setForm] = useState(initial);
   const [titleError, setTitleError] = useState<string | null>(null);
   const [amountError, setAmountError] = useState<string | null>(null);
+  const [dateError, setDateError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
+  const anchorDateRef = useRef<HTMLInputElement>(null);
+  const purchasedAtRef = useRef<HTMLInputElement>(null);
+  const confirmDeleteAtRef = useRef(0);
   const queryClient = useQueryClient();
   const done = () => {
     invalidateExpenses(queryClient);
     onClose();
   };
+
+  // Разоружаем взвод по таймеру — см. DELETE_CONFIRM_TIMEOUT_MS.
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const timer = setTimeout(() => setConfirmDelete(false), DELETE_CONFIRM_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [confirmDelete]);
 
   /** Только изменённые поля (как TaskModal). Смена типа шлёт полный набор полей
    * нового статуса — сервер проверит инвариант (§7.1). */
@@ -95,16 +114,41 @@ export default function ExpenseModal({ expense, onClose }: Props) {
       return;
     }
     setAmountError(null);
+    // Ctrl/Cmd+Enter (Modal.tsx) вызывает onSubmit напрямую, минуя HTML5
+    // required у полей даты — обе проверки ниже обязаны жить в JS, а не
+    // полагаться на браузерную валидацию формы.
     if (form.status === "recurring" && !form.anchor_date) {
-      setAmountError("У регулярной траты нужна дата списания");
+      setDateError("У регулярной траты нужна дата списания");
+      anchorDateRef.current?.focus();
       return;
     }
+    if (form.status === "bought" && !form.purchased_at) {
+      // Инвариант статуса требует у «Куплено» дату покупки — пустая не
+      // является легальным состоянием, поэтому это ошибка, а не молчаливый
+      // clear (JSON.stringify всё равно роняет undefined из патча).
+      setDateError("Укажите дату покупки");
+      purchasedAtRef.current?.focus();
+      return;
+    }
+    setDateError(null);
     const patch = buildPatch();
     if (Object.keys(patch).length === 0) {
       onClose();
       return;
     }
     saveMutation.mutate(patch);
+  };
+
+  const handleDeleteClick = () => {
+    const now = Date.now();
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      confirmDeleteAtRef.current = now;
+      return;
+    }
+    if (now - confirmDeleteAtRef.current < DELETE_CONFIRM_THRESHOLD_MS) return;
+    setConfirmDelete(false);
+    deleteMutation.mutate();
   };
 
   const error = saveMutation.error ?? deleteMutation.error ?? buyMutation.error;
@@ -123,8 +167,11 @@ export default function ExpenseModal({ expense, onClose }: Props) {
           onChange={setForm}
           titleError={titleError}
           amountError={amountError}
+          dateError={dateError}
           titleRef={titleRef}
           amountRef={amountRef}
+          anchorDateRef={anchorDateRef}
+          purchasedAtRef={purchasedAtRef}
         />
         {error instanceof Error && <p className="text-sm text-danger">{error.message}</p>}
         <div className="flex flex-wrap items-center gap-2">
@@ -142,7 +189,7 @@ export default function ExpenseModal({ expense, onClose }: Props) {
           <button
             type="button"
             className="btn-ghost ml-auto text-danger"
-            onClick={() => (confirmDelete ? deleteMutation.mutate() : setConfirmDelete(true))}
+            onClick={handleDeleteClick}
           >
             {confirmDelete ? "Точно удалить?" : "Удалить"}
           </button>
