@@ -6,7 +6,9 @@ from datetime import date, timedelta
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import Expense, ExpensePeriod, ExpenseStatus, TaskSource, utcnow
+from app.schemas import ExpenseSummaryOut, UpcomingCharge
 from app.services.tasks import local_today
 
 
@@ -249,3 +251,68 @@ def purge_deleted_expenses(db: Session) -> int:
         db.delete(e)
     db.commit()
     return len(stale)
+
+
+UPCOMING_DAYS = 7
+
+# Приведение к среднему календарному месяцу (§6). Округление — один раз,
+# после суммирования по всем картам.
+MONTHLY_FACTOR: dict[ExpensePeriod, float] = {
+    ExpensePeriod.day: 365 / 12,
+    ExpensePeriod.month: 1.0,
+    ExpensePeriod.quarter: 1 / 3,
+    ExpensePeriod.year: 1 / 12,
+}
+
+
+def next_charge_for(e: Expense, today: date | None = None) -> date | None:
+    """next_charge только для активной регулярной траты; иначе None (§5)."""
+    if e.status != ExpenseStatus.recurring or not e.active:
+        return None
+    assert e.period is not None and e.anchor_date is not None  # инвариант §4
+    return next_charge(e.period, e.anchor_date, today or local_today())
+
+
+def summary(db: Session) -> ExpenseSummaryOut:
+    today = local_today()
+    active = list(
+        db.scalars(
+            select(Expense).where(
+                Expense.deleted_at.is_(None),
+                Expense.status == ExpenseStatus.recurring,
+                Expense.active.is_(True),
+            )
+        )
+    )
+    monthly = round(sum(e.amount * MONTHLY_FACTOR[e.period] for e in active if e.period))
+    horizon = today + timedelta(days=UPCOMING_DAYS)
+    upcoming = sorted(
+        (
+            UpcomingCharge(expense_id=e.id, title=e.title, amount=e.amount, date=charge)
+            for e in active
+            if (charge := next_charge_for(e, today)) is not None and charge <= horizon
+        ),
+        key=lambda u: (u.date, u.expense_id),
+    )
+    wanted_total = db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.deleted_at.is_(None), Expense.status == ExpenseStatus.wanted
+        )
+    )
+    month_start = today.replace(day=1)
+    bought = db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.deleted_at.is_(None),
+            Expense.status == ExpenseStatus.bought,
+            Expense.purchased_at >= month_start,
+            Expense.purchased_at <= today,
+        )
+    )
+    return ExpenseSummaryOut(
+        monthly_recurring=int(monthly),
+        upcoming=upcoming,
+        upcoming_total=sum(u.amount for u in upcoming),
+        wanted_total=int(wanted_total or 0),
+        bought_this_month=int(bought or 0),
+        currency=get_settings().expense_currency,
+    )

@@ -256,3 +256,19 @@ class InsightsOut(BaseModel):
     text: str = ""
     ai_ok: bool
     ai_error: str | None = None
+
+
+class UpcomingCharge(BaseModel):
+    expense_id: int
+    title: str
+    amount: int
+    date: date
+
+
+class ExpenseSummaryOut(BaseModel):
+    monthly_recurring: int
+    upcoming: list[UpcomingCharge]
+    upcoming_total: int
+    wanted_total: int
+    bought_this_month: int
+    currency: str
