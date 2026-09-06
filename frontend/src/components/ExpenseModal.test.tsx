@@ -98,6 +98,47 @@ describe("ExpenseModal", () => {
     expect(patch).not.toHaveBeenCalled();
   });
 
+  // Round 2 regression: dateError — общий слот на форме, но ни одна модалка
+  // не чистила его при смене form.status. Взводим ошибку «Дата списания» на
+  // регулярной, затем кликом переключаемся на «Куплено» — блок «Дата
+  // покупки» монтируется с валидной автоподставленной датой, но старое
+  // сообщение (про другое поле) раньше оставалось прицепленным к нему же
+  // через общий dateErrId.
+  it("смена на «Куплено» после ошибки даты списания не тащит её на «Дата покупки»", async () => {
+    const patch = vi.spyOn(api, "patchExpense");
+    renderModal();
+    const anchorDate = screen.getByLabelText("Дата списания");
+    fireEvent.change(anchorDate, { target: { value: "" } });
+    fireEvent.keyDown(document, { key: "Enter", ctrlKey: true });
+    expect(anchorDate).toHaveAccessibleDescription("У регулярной траты нужна дата списания");
+    await userEvent.click(screen.getByRole("radio", { name: "Куплено" }));
+    const purchasedAt = screen.getByLabelText("Дата покупки");
+    expect(purchasedAt).not.toHaveAccessibleDescription();
+    expect(purchasedAt).not.toHaveAttribute("aria-invalid");
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  // Обратное направление того же бага, обычным кликом (без Ctrl+Enter):
+  // взводим ошибку «Дата покупки» на купленной, переключаемся на
+  // «Регулярная» — «Дата списания» монтируется с валидной автоподставленной
+  // датой и не должна унаследовать чужое сообщение.
+  it("смена на «Регулярная» после ошибки даты покупки не тащит её на «Дата списания»", async () => {
+    const patch = vi.spyOn(api, "patchExpense");
+    renderModal({
+      ...EXPENSE, status: "bought", period: null, anchor_date: null,
+      purchased_at: "2026-08-20", next_charge: null,
+    });
+    const purchasedAt = screen.getByLabelText("Дата покупки");
+    fireEvent.change(purchasedAt, { target: { value: "" } });
+    await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    expect(purchasedAt).toHaveAccessibleDescription("Укажите дату покупки");
+    await userEvent.click(screen.getByRole("radio", { name: "Регулярная" }));
+    const anchorDate = screen.getByLabelText("Дата списания");
+    expect(anchorDate).not.toHaveAccessibleDescription();
+    expect(anchorDate).not.toHaveAttribute("aria-invalid");
+    expect(patch).not.toHaveBeenCalled();
+  });
+
   // Находка №2: кнопка удаления — один и тот же DOM-узел до и после взвода,
   // без разоружения и без порога по времени, поэтому двойной клик (одним
   // физическим жестом) взводил и тут же удалял.
@@ -146,6 +187,31 @@ describe("NewExpenseModal", () => {
     expect(screen.getByLabelText("Дата списания")).toHaveAccessibleDescription(
       "У регулярной траты нужна дата списания",
     );
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  // Round 2: тот же фикс, что и у ExpenseModal ("обе модалки нуждаются в
+  // одинаковом лечении" — бриф раунда 2). У NewExpenseModal нет проверки
+  // bought/purchased_at (formToBody вообще не шлёт purchased_at), поэтому
+  // тут воспроизводимо только направление recurring → bought.
+  it("смена на «Куплено» после ошибки даты списания не тащит её на «Дата покупки»", async () => {
+    const create = vi.spyOn(api, "createExpense");
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <NewExpenseModal status="recurring" onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await userEvent.type(screen.getByLabelText("Название"), "Зал");
+    await userEvent.type(screen.getByLabelText("Сумма, ₽"), "2500");
+    fireEvent.change(screen.getByLabelText("Дата списания"), { target: { value: "" } });
+    fireEvent.keyDown(document, { key: "Enter", ctrlKey: true });
+    expect(screen.getByLabelText("Дата списания")).toHaveAccessibleDescription(
+      "У регулярной траты нужна дата списания",
+    );
+    await userEvent.click(screen.getByRole("radio", { name: "Куплено" }));
+    const purchasedAt = screen.getByLabelText("Дата покупки");
+    expect(purchasedAt).not.toHaveAccessibleDescription();
+    expect(purchasedAt).not.toHaveAttribute("aria-invalid");
     expect(create).not.toHaveBeenCalled();
   });
 });

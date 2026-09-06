@@ -37,6 +37,17 @@ export default function NewExpenseModal({
     },
   });
 
+  /** Round 2: то же лечение, что и в ExpenseModal — dateError завязан на то,
+   * какое поле даты сейчас смонтировано (anchor_date vs purchased_at), а это
+   * решает form.status. Смена статуса обязана сбрасывать dateError, иначе
+   * старое сообщение всплывает под другим, только что показанным полем.
+   * titleError/amountError не трогаем: их поля от статуса не зависят и
+   * видимость не меняют. */
+  const handleFormChange = (next: ExpenseFormValues) => {
+    if (next.status !== form.status) setDateError(null);
+    setForm(next);
+  };
+
   const submit = () => {
     if (createMutation.isPending) return;
     if (!form.title.trim()) {
@@ -75,7 +86,7 @@ export default function NewExpenseModal({
         {aiNote && <p className="rounded-lg bg-ai/10 px-3 py-2 text-xs text-ai">{aiNote}</p>}
         <ExpenseForm
           values={form}
-          onChange={setForm}
+          onChange={handleFormChange}
           titleError={titleError}
           amountError={amountError}
           dateError={dateError}

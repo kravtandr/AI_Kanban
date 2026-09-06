@@ -139,6 +139,17 @@ export default function ExpenseModal({ expense, onClose }: Props) {
     saveMutation.mutate(patch);
   };
 
+  /** Round 2: dateError описывает конкретное поле (anchor_date или
+   * purchased_at), а эти поля меняют видимость по form.status — смена
+   * статуса обязана сбрасывать dateError, иначе старое сообщение всплывает
+   * под новым, только что показанным полем даты. titleError/amountError не
+   * трогаем: их поля всегда на экране независимо от статуса, их корректность
+   * от статуса не зависит, так что «не тому полю» здесь произойти не может. */
+  const handleFormChange = (next: ExpenseFormValues) => {
+    if (next.status !== form.status) setDateError(null);
+    setForm(next);
+  };
+
   const handleDeleteClick = () => {
     const now = Date.now();
     if (!confirmDelete) {
@@ -164,7 +175,7 @@ export default function ExpenseModal({ expense, onClose }: Props) {
       >
         <ExpenseForm
           values={form}
-          onChange={setForm}
+          onChange={handleFormChange}
           titleError={titleError}
           amountError={amountError}
           dateError={dateError}
