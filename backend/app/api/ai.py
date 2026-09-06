@@ -5,7 +5,14 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.config import get_settings
 from app.db import get_db
-from app.schemas import DraftIn, DraftOut, InsightsIn, InsightsOut, TranscriptionOut
+from app.schemas import (
+    DraftIn,
+    DraftOut,
+    ExpenseDraftOut,
+    InsightsIn,
+    InsightsOut,
+    TranscriptionOut,
+)
 from app.services import ai as ai_svc
 from app.services import projects as project_svc
 from app.services import stt as stt_svc
@@ -22,6 +29,17 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
         project_id=ai_svc.resolve_project_id(
             db, result.draft.project, result.draft.project_description
         ),
+        ai_ok=result.ok,
+        ai_error=result.error,
+    )
+
+
+@router.post("/draft-expense", response_model=ExpenseDraftOut)
+def draft_expense(body: DraftIn, db: Session = Depends(get_db)):
+    result = ai_svc.draft_expense(db, body.text)
+    return ExpenseDraftOut(
+        draft=result.draft,
+        amount=ai_svc.rub_to_kopecks(result.draft.amount_rub),
         ai_ok=result.ok,
         ai_error=result.error,
     )

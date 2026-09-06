@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -333,3 +334,37 @@ class ExpenseOut(BaseModel):
     next_charge: date | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ExpenseDraft(BaseModel):
+    """Плоская схема черновика траты для слабой локальной модели (§8.1)."""
+
+    title: str = Field(description="Short expense name, max 200 chars")
+    amount_rub: float | None = Field(
+        default=None, description="Price in rubles, decimals allowed, or null if not stated"
+    )
+    status: Literal["recurring", "wanted"] = Field(
+        default="wanted",
+        description=(
+            "recurring for repeating payments (subscriptions, rent), wanted for one-off purchases"
+        ),
+    )
+    period: ExpensePeriod | None = Field(
+        default=None, description="Only for recurring: day|month|quarter|year"
+    )
+    anchor_date: date | None = Field(
+        default=None, description="ISO date of one charge, only for recurring"
+    )
+    tags: list[str] = Field(default_factory=list, description="0-3 short lowercase tags")
+
+    @field_validator("title")
+    @classmethod
+    def _trim_title(cls, value: str) -> str:
+        return value.strip()[:200] or "Трата"
+
+
+class ExpenseDraftOut(BaseModel):
+    draft: ExpenseDraft
+    amount: int  # копейки, round(amount_rub * 100); 0 при null
+    ai_ok: bool
+    ai_error: str | None = None
