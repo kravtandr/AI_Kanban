@@ -117,3 +117,47 @@ def test_endpoint(auth_client, monkeypatch):
     assert body["ai_ok"] is True
     assert body["amount"] == 89900
     assert body["draft"]["period"] == "month"
+
+
+def test_rub_to_kopecks_direct():
+    """Юнит-покрытие чистой функции, отдельно от HTTP/LLM (обзор, находка #2)."""
+    cases = [
+        (None, 0),
+        (899, 89900),
+        (2500.5, 250050),
+        (-50, 0),
+    ]
+    for amount_rub, expected in cases:
+        assert ai_svc.rub_to_kopecks(amount_rub) == expected
+
+
+def test_rub_to_kopecks_clamps_to_column_ceiling():
+    """Expense.amount — INTEGER (int4), потолок 2147483647 копеек (находка #2)."""
+    assert ai_svc.rub_to_kopecks(1e30) == ai_svc.MAX_AMOUNT_KOPECKS
+
+
+def test_non_finite_amount_degrades_instead_of_500(auth_client, monkeypatch):
+    """Находка #1 (FR-5.5): 1e400 в JSON слабой модели -> json.loads даёт inf ->
+    без allow_inf_nan=False ExpenseDraft провалидировал бы inf, и
+    rub_to_kopecks(inf) уронил бы round() в эндпоинте, вне try draft_expense.
+    Здесь мок воспроизводит ровно это: _call_model отдаёт ЧЕРЕЗ реальный
+    ExpenseDraft.model_validate({... "amount_rub": inf}) — с фиксом это бросает
+    ValidationError и деградирует; без фикса draft вернулся бы с amount_rub=inf
+    и уронил бы round(inf) в эндпоинте (500)."""
+
+    def fake(system, user_message, *, schema=TaskDraft):
+        return (
+            schema.model_validate({"title": "Слишком дорого", "amount_rub": float("inf")}),
+            1,
+            1,
+        )
+
+    monkeypatch.setattr(ai_svc, "_call_model", fake)
+    r = auth_client.post("/api/v1/ai/draft-expense", json={"text": "бесконечно дорогая трата"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ai_ok"] is False
+    assert body["amount"] == 0
+    with db_module.get_session_factory()() as db:
+        rows = db.query(LlmUsage).filter_by(operation="draft_expense").all()
+    assert [row.ok for row in rows] == [False]

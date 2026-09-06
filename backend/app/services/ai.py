@@ -599,5 +599,9 @@ def draft_expense(db: Session, text: str) -> ExpenseDraftResult:
         return ExpenseDraftResult(_fallback_expense(text), ok=False, error=str(exc))
 
 
+# Expense.amount is Mapped[int] -> PostgreSQL INTEGER (int4); this is its ceiling in kopecks.
+MAX_AMOUNT_KOPECKS = 2_147_483_647
+
+
 def rub_to_kopecks(amount_rub: float | None) -> int:
-    return max(0, round((amount_rub or 0) * 100))
+    return max(0, min(MAX_AMOUNT_KOPECKS, round((amount_rub or 0) * 100)))

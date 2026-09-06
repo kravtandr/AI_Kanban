@@ -341,7 +341,10 @@ class ExpenseDraft(BaseModel):
 
     title: str = Field(description="Short expense name, max 200 chars")
     amount_rub: float | None = Field(
-        default=None, description="Price in rubles, decimals allowed, or null if not stated"
+        default=None,
+        description="Price in rubles, decimals allowed, or null if not stated",
+        # json.loads() accepts inf/NaN; must fail validation here, not round() later (FR-5.5)
+        allow_inf_nan=False,
     )
     status: Literal["recurring", "wanted"] = Field(
         default="wanted",
