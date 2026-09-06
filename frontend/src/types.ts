@@ -147,3 +147,71 @@ export interface Insights {
   ai_ok: boolean;
   ai_error: string | null;
 }
+
+export type ExpenseStatus = "recurring" | "wanted" | "bought";
+export type ExpensePeriod = "day" | "month" | "quarter" | "year";
+
+export const EXPENSE_COLUMNS: { id: ExpenseStatus; title: string }[] = [
+  { id: "recurring", title: "Регулярные" },
+  { id: "wanted", title: "Хочу купить" },
+  { id: "bought", title: "Куплено" },
+];
+
+export const PERIODS: { id: ExpensePeriod; title: string; short: string }[] = [
+  { id: "day", title: "Каждый день", short: "день" },
+  { id: "month", title: "Каждый месяц", short: "месяц" },
+  { id: "quarter", title: "Каждый квартал", short: "квартал" },
+  { id: "year", title: "Каждый год", short: "год" },
+];
+
+export interface Expense {
+  id: number;
+  title: string;
+  note: string;
+  /** Копейки. */
+  amount: number;
+  status: ExpenseStatus;
+  period: ExpensePeriod | null;
+  anchor_date: string | null;
+  active: boolean;
+  purchased_at: string | null;
+  tags: string[];
+  sort_order: number;
+  source: "manual" | "ai" | "mcp";
+  created_at: string;
+  updated_at: string;
+  /** Считает сервер; null у неактивных и у wanted/bought. Ключ обязателен. */
+  next_charge: string | null;
+}
+
+export interface ExpenseDraft {
+  title: string;
+  amount_rub: number | null;
+  status: "recurring" | "wanted";
+  period: ExpensePeriod | null;
+  anchor_date: string | null;
+  tags: string[];
+}
+
+export interface ExpenseDraftResponse {
+  draft: ExpenseDraft;
+  amount: number;
+  ai_ok: boolean;
+  ai_error: string | null;
+}
+
+export interface UpcomingCharge {
+  expense_id: number;
+  title: string;
+  amount: number;
+  date: string;
+}
+
+export interface ExpenseSummary {
+  monthly_recurring: number;
+  upcoming: UpcomingCharge[];
+  upcoming_total: number;
+  wanted_total: number;
+  bought_this_month: number;
+  currency: string;
+}
