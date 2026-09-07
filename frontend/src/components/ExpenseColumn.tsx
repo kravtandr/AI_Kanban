@@ -16,6 +16,22 @@ interface Props {
   clickGuard: MutableRefObject<boolean>;
 }
 
+/** Droppable-обёртка карточки: сброс «на карточку» значит «перед ней» —
+ * id несёт статус и id цели, чтобы onDragEnd мог поставить sort_order. */
+function CardSlot({ expense, onOpen, clickGuard, canDrop }: {
+  expense: Expense; onOpen: (e: Expense) => void; clickGuard: MutableRefObject<boolean>; canDrop: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `card-${expense.status}-${expense.id}`,
+    disabled: !canDrop,
+  });
+  return (
+    <div ref={setNodeRef} className={isOver && canDrop ? "border-t-2 border-amber pt-1" : ""}>
+      <ExpenseCard expense={expense} onOpen={onOpen} clickGuard={clickGuard} />
+    </div>
+  );
+}
+
 export default function ExpenseColumn({
   id, title, expenses, onOpen, onAdd, activeOnMobile, canDrop, clickGuard,
 }: Props) {
@@ -46,7 +62,7 @@ export default function ExpenseColumn({
       </header>
       <div className="card-list flex flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-0.5 pb-28 md:pb-2">
         {expenses.map((e) => (
-          <ExpenseCard key={e.id} expense={e} onOpen={onOpen} clickGuard={clickGuard} />
+          <CardSlot key={e.id} expense={e} onOpen={onOpen} clickGuard={clickGuard} canDrop={canDrop} />
         ))}
         {expenses.length === 0 && (
           <button
