@@ -64,4 +64,8 @@ describe("formToBody", () => {
     });
     expect(body.active).toBe(false);
   });
+  it("у не-регулярной active всегда true, что бы ни было в форме", () => {
+    const body = formToBody({ ...emptyExpenseForm("recurring"), title: "x", amount: "1", active: false, status: "wanted" });
+    expect(body.active).toBe(true);
+  });
 });
