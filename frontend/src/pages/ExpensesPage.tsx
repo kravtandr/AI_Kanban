@@ -201,37 +201,6 @@ export default function ExpensesPage() {
       <main className="flex flex-1 flex-col overflow-hidden p-3 md:p-4">
         {summaryQuery.data && <ExpenseSummaryBar summary={summaryQuery.data} />}
 
-        <div className="mb-2 flex items-center gap-1 md:hidden">
-          {activeExpense ? (
-            EXPENSE_COLUMNS.map((c) => (
-              <MobileDropZone key={c.id} status={c.id} title={c.title} enabled={canDropTo(activeExpense, c.id)} />
-            ))
-          ) : (
-            <>
-              <div className="no-scrollbar flex flex-1 items-center gap-1 overflow-x-auto">
-                {EXPENSE_COLUMNS.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => setMobileStatus(c.id)}
-                    aria-pressed={c.id === mobileStatus}
-                    className={`tab ${c.id === mobileStatus ? "bg-panel text-ink" : "text-dim"}`}
-                  >
-                    {c.title}
-                    <span className="ml-1.5 text-dim/60">{byStatus(c.id).length}</span>
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={() => setCreateStatus(mobileStatus)}
-                aria-label="Добавить трату в выбранную колонку"
-                className="btn-icon h-8 w-8 font-mono text-base"
-              >
-                <span aria-hidden="true">+</span>
-              </button>
-            </>
-          )}
-        </div>
-
         {expensesQuery.isError && (
           <p className="p-4 text-sm text-danger">Не удалось загрузить траты — обновите страницу</p>
         )}
@@ -246,6 +215,36 @@ export default function ExpensesPage() {
               releaseCardClick();
             }}
           >
+            <div className="mb-2 flex items-center gap-1 md:hidden">
+              {activeExpense ? (
+                EXPENSE_COLUMNS.map((c) => (
+                  <MobileDropZone key={c.id} status={c.id} title={c.title} enabled={canDropTo(activeExpense, c.id)} />
+                ))
+              ) : (
+                <>
+                  <div className="no-scrollbar flex flex-1 items-center gap-1 overflow-x-auto">
+                    {EXPENSE_COLUMNS.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setMobileStatus(c.id)}
+                        aria-pressed={c.id === mobileStatus}
+                        className={`tab ${c.id === mobileStatus ? "bg-panel text-ink" : "text-dim"}`}
+                      >
+                        {c.title}
+                        <span className="ml-1.5 text-dim/60">{byStatus(c.id).length}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => setCreateStatus(mobileStatus)}
+                    aria-label="Добавить трату в выбранную колонку"
+                    className="btn-icon h-8 w-8 font-mono text-base"
+                  >
+                    <span aria-hidden="true">+</span>
+                  </button>
+                </>
+              )}
+            </div>
             <div className="flex flex-1 gap-3 overflow-hidden">
               {EXPENSE_COLUMNS.map((c) => (
                 <ExpenseColumn

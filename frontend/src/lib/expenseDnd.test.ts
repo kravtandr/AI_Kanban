@@ -10,10 +10,13 @@ describe("canDropTo", () => {
   it("wanted ↔ bought разрешено, recurring — только в свою колонку", () => {
     const wanted = { ...base, status: "wanted" } as Expense;
     const rec = { ...base, status: "recurring" } as Expense;
+    const bought = { ...base, status: "bought" } as Expense;
     expect(canDropTo(wanted, "bought")).toBe(true);
     expect(canDropTo(wanted, "recurring")).toBe(false);
     expect(canDropTo(rec, "wanted")).toBe(false);
     expect(canDropTo(rec, "recurring")).toBe(true);
+    expect(canDropTo(bought, "wanted")).toBe(true);
+    expect(canDropTo(bought, "recurring")).toBe(false);
   });
 });
 
