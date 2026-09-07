@@ -288,6 +288,10 @@ class ExpenseIn(BaseModel):
     status: ExpenseStatus = ExpenseStatus.wanted
     period: ExpensePeriod | None = None
     anchor_date: date | None = None
+    # Дата покупки (только status=bought) и пауза (только status=recurring); без
+    # них create_expense не может выполнить то же, что и PATCH (обзор, находка #2).
+    purchased_at: date | None = None
+    active: bool = True
     note: str = ""
     tags: list[str] = Field(default_factory=list)
     source: TaskSource = TaskSource.manual

@@ -48,6 +48,41 @@ def test_invariant_violation_is_400(auth_client):
     assert r.json()["detail"]["code"] == "bad_request"
 
 
+def test_amount_above_ceiling_is_400_not_500(auth_client):
+    """Обзор, находка #3: schemas.ExpenseIn ограничивал amount только ge=0.
+    Expense.amount — PostgreSQL INTEGER (тест здесь на SQLite не поймал бы
+    NumericValueOutOfRange, поэтому потолок проверяется явно в _check_invariants,
+    до commit, и REST должен вернуть чистые 400, а не 500 глобального хендлера."""
+    r = auth_client.post(
+        "/api/v1/expenses",
+        json={"title": "Квартира", "amount": 2_147_483_648},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "bad_request"
+
+
+def test_create_bought_with_explicit_past_date_via_rest(auth_client):
+    """Обзор, находка #2: POST /expenses отбрасывал и purchased_at, и active —
+    «Дата покупки»/«Активна» в форме создания были декоративными. _today фикстура
+    выше держит local_today() на 2026-09-06, поэтому совпадение с датой запроса
+    исключено — если бы дата не сохранялась, сервер подставил бы 2026-09-06."""
+    e = _create(auth_client, status="bought", purchased_at="2026-08-01")
+    assert e["status"] == "bought"
+    assert e["purchased_at"] == "2026-08-01"
+
+
+def test_create_paused_recurring_via_rest(auth_client):
+    e = _create(
+        auth_client,
+        status="recurring",
+        period="month",
+        anchor_date="2026-01-15",
+        active=False,
+    )
+    assert e["active"] is False
+    assert e["next_charge"] is None
+
+
 def test_week_period_rejected_by_schema(auth_client):
     r = auth_client.post(
         "/api/v1/expenses",

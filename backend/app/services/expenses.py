@@ -48,6 +48,11 @@ def next_charge(period: ExpensePeriod, anchor: date, today: date) -> date:
 
 PURGE_DELETED_AFTER_DAYS = 30
 
+# Expense.amount is Mapped[int] -> PostgreSQL INTEGER (int4); this is its ceiling in
+# kopecks. Lives here, not in services/ai.py, because it describes this module's
+# column -- ai.py imports it back for rub_to_kopecks's own clamping.
+MAX_AMOUNT_KOPECKS = 2_147_483_647
+
 
 def normalize_tags(tags: list[str] | None) -> list[str]:
     seen: list[str] = []
@@ -62,6 +67,8 @@ def _check_invariants(e: Expense) -> None:
     """Инвариант §4. Вызывается после применения ЛЮБЫХ изменений, до commit."""
     if e.amount < 0:
         raise ExpenseError("Amount must be >= 0")
+    if e.amount > MAX_AMOUNT_KOPECKS:
+        raise ExpenseError(f"Amount must be <= {MAX_AMOUNT_KOPECKS} kopecks")
     if not e.title.strip():
         raise ExpenseError("Title is required")
     if e.status == ExpenseStatus.recurring:
@@ -141,11 +148,17 @@ def create_expense(
     status: ExpenseStatus = ExpenseStatus.wanted,
     period: ExpensePeriod | None = None,
     anchor_date: date | None = None,
+    purchased_at: date | None = None,
+    active: bool = True,
     note: str = "",
     tags: list[str] | None = None,
     source: TaskSource = TaskSource.manual,
     ai_meta: dict | None = None,
 ) -> Expense:
+    # purchased_at из вызывающего кода (явная дата покупки) побеждает; сегодняшняя
+    # дата — только запасной вариант для bought без даты, как раньше (§9).
+    if purchased_at is None and status == ExpenseStatus.bought:
+        purchased_at = local_today()
     e = Expense(
         title=title.strip()[:200],
         amount=amount,
@@ -153,11 +166,11 @@ def create_expense(
         period=period,
         anchor_date=anchor_date,
         note=note,
-        active=True,
+        active=active,
         tags=normalize_tags(tags),
         source=source,
         ai_meta=ai_meta,
-        purchased_at=local_today() if status == ExpenseStatus.bought else None,
+        purchased_at=purchased_at,
         sort_order=_next_sort_order(db, status),
     )
     _check_invariants(e)
@@ -200,6 +213,8 @@ def update_expense(db: Session, expense_id: int, **fields) -> Expense:
     if e.status == ExpenseStatus.bought and e.purchased_at is None:
         e.purchased_at = local_today()
     if e.status == ExpenseStatus.wanted:
+        e.purchased_at = None
+    if e.status == ExpenseStatus.recurring:
         e.purchased_at = None
     try:
         _check_invariants(e)

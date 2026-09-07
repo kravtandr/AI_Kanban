@@ -20,6 +20,7 @@ from app.config import Settings, get_settings
 from app.models import ExpensePeriod, LlmUsage, Task
 from app.schemas import AnalyticsOut, ExpenseDraft, InsightsOut, TaskDraft
 from app.services import analytics
+from app.services.expenses import MAX_AMOUNT_KOPECKS
 from app.services.projects import (
     ProjectError,
     create_project,
@@ -599,9 +600,8 @@ def draft_expense(db: Session, text: str) -> ExpenseDraftResult:
         return ExpenseDraftResult(_fallback_expense(text), ok=False, error=str(exc))
 
 
-# Expense.amount is Mapped[int] -> PostgreSQL INTEGER (int4); this is its ceiling in kopecks.
-MAX_AMOUNT_KOPECKS = 2_147_483_647
-
-
+# MAX_AMOUNT_KOPECKS now lives in services/expenses.py (it describes that module's
+# column, not this one) and is imported above; rub_to_kopecks keeps clamping to it
+# exactly as before.
 def rub_to_kopecks(amount_rub: float | None) -> int:
     return max(0, min(MAX_AMOUNT_KOPECKS, round((amount_rub or 0) * 100)))

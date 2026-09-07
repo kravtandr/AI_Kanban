@@ -42,12 +42,17 @@ export interface ExpenseBody {
   status: ExpenseStatus;
   period: ExpensePeriod | null;
   anchor_date: string | null;
+  purchased_at: string | null;
+  active: boolean;
   note: string;
   tags: string[];
 }
 
 /** Тело POST /expenses. Инвариант §4 выполняется здесь же: у не-регулярной
- * период и дата обнуляются, что бы ни осталось в форме от прошлого типа. */
+ * период и дата (anchor_date) обнуляются, у не-«куплено» — purchased_at,
+ * что бы ни осталось в форме от прошлого типа (обзор, находка #2: раньше
+ * purchased_at/active сюда вообще не попадали, и создание молча теряло и
+ * выбранную дату покупки, и снятую галочку «активна»). */
 export function formToBody(v: ExpenseFormValues): ExpenseBody {
   const recurring = v.status === "recurring";
   return {
@@ -56,6 +61,8 @@ export function formToBody(v: ExpenseFormValues): ExpenseBody {
     status: v.status,
     period: recurring ? v.period : null,
     anchor_date: recurring ? v.anchor_date || null : null,
+    purchased_at: v.status === "bought" ? v.purchased_at || null : null,
+    active: v.active,
     note: v.note,
     tags: parseTags(v.tags),
   };

@@ -44,6 +44,54 @@ def test_negative_amount_rejected(db):
         svc.create_expense(db, title="x", amount=-1)
 
 
+def test_amount_above_ceiling_rejected(db):
+    """Обзор, находка #3: Expense.amount — PostgreSQL INTEGER, потолок
+    MAX_AMOUNT_KOPECKS. Раньше только rub_to_kopecks (AI/MCP-путь) клэмпил к
+    нему; REST/сервис пропускали что угодно и падали на psycopg NumericValueOutOfRange
+    -> 500. Теперь это ExpenseError из _check_invariants, как любое другое нарушение."""
+    with pytest.raises(svc.ExpenseError):
+        svc.create_expense(db, title="x", amount=svc.MAX_AMOUNT_KOPECKS + 1)
+    # Граница — ещё легальна.
+    e = svc.create_expense(db, title="x", amount=svc.MAX_AMOUNT_KOPECKS)
+    assert e.amount == svc.MAX_AMOUNT_KOPECKS
+
+
+def test_create_bought_with_explicit_past_date_keeps_it(db, monkeypatch):
+    """Обзор, находка #2: create_expense игнорировал purchased_at и всегда
+    штамповал local_today() для bought — «Дата покупки» в форме создания была
+    декоративной. Сегодня замоканное на дату, отличную от переданной, чтобы
+    тест не мог случайно пройти на совпадении."""
+    monkeypatch.setattr(svc, "local_today", lambda: date(2026, 9, 6))
+    past = date(2026, 8, 1)
+    e = svc.create_expense(
+        db, title="Наушники", amount=500000, status=ExpenseStatus.bought, purchased_at=past
+    )
+    assert e.purchased_at == past
+
+
+def test_create_bought_without_date_still_defaults_to_today(db, monkeypatch):
+    """Запасной путь из того же фикса: purchased_at не передан -> сегодня, как раньше."""
+    monkeypatch.setattr(svc, "local_today", lambda: date(2026, 9, 6))
+    e = svc.create_expense(db, title="Наушники", amount=500000, status=ExpenseStatus.bought)
+    assert e.purchased_at == date(2026, 9, 6)
+
+
+def test_create_paused_recurring_stays_paused(db):
+    """Обзор, находка #2: create_expense хардкодил active=True — снятая на
+    создании галочка «Активна» терялась молча."""
+    e = svc.create_expense(
+        db,
+        title="Зал",
+        amount=250000,
+        status=ExpenseStatus.recurring,
+        period=ExpensePeriod.month,
+        anchor_date=date(2026, 1, 15),
+        active=False,
+    )
+    assert e.active is False
+    assert svc.list_expenses(db) == []  # пауза скрыта по умолчанию, как и после PATCH
+
+
 def test_tags_normalized(db):
     e = svc.create_expense(db, title="x", amount=1, tags=["Подписки", " подписки ", "TV"])
     assert e.tags == ["подписки", "tv"]
@@ -89,6 +137,25 @@ def test_update_to_recurring_via_patch(db):
         anchor_date=date(2026, 3, 1),
     )
     assert upd.period == ExpensePeriod.year
+
+
+def test_update_bought_to_recurring_clears_purchased_at(db, monkeypatch):
+    """Обзор, находка #1: bought -> recurring было недостижимо через любой API-путь
+    — update_expense чистил purchased_at при переходе в wanted, но не в recurring,
+    и _check_invariants падала с «Recurring expense cannot have purchased_at»."""
+    monkeypatch.setattr(svc, "local_today", lambda: date(2026, 9, 6))
+    e = svc.create_expense(db, title="Зал", amount=250000, status=ExpenseStatus.bought)
+    assert e.purchased_at == date(2026, 9, 6)
+    upd = svc.update_expense(
+        db,
+        e.id,
+        status=ExpenseStatus.recurring,
+        period=ExpensePeriod.month,
+        anchor_date=date(2026, 3, 1),
+    )
+    assert upd.status == ExpenseStatus.recurring
+    assert upd.purchased_at is None
+    assert upd.period == ExpensePeriod.month and upd.anchor_date == date(2026, 3, 1)
 
 
 def test_clear_period_turns_recurring_into_wanted_only_with_status(db):
