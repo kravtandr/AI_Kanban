@@ -6,31 +6,44 @@ through the same service layer as the REST API. Tool logic lives in plain
 functions (`*_impl`) so it can be tested without the MCP transport.
 """
 
+import math
 from datetime import UTC, datetime
 from datetime import date as date_type
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from app.api.expenses import expense_out
 from app.config import get_settings
 from app.db import get_session_factory
-from app.models import EstimateBucket, TaskPriority, TaskSource, TaskStatus
+from app.models import (
+    EstimateBucket,
+    ExpensePeriod,
+    ExpenseStatus,
+    TaskPriority,
+    TaskSource,
+    TaskStatus,
+)
 from app.services import ai as ai_svc
 
 # MANDATORY alias. @mcp.tool() returns the function itself, so `def analytics`
 # below rebinds this module-level name; without the alias analytics.compute()
 # would raise AttributeError: 'function' object has no attribute 'compute' on the
-# very first tool call. Same trick as ai_svc / project_svc / task_svc.
+# very first tool call. Same trick as ai_svc / expense_svc / project_svc / task_svc.
 from app.services import analytics as analytics_svc
+from app.services import expenses as expense_svc
 from app.services import projects as project_svc
 from app.services import tasks as task_svc
+from app.services.ai import rub_to_kopecks
 
 mcp = FastMCP(
     "TaskTracker",
     instructions=(
         "Personal kanban task tracker. Use create_task to record new work items, "
         "list_tasks/get_task to inspect the board, move_task/complete_task to update "
-        "progress, and daily_summary for a day overview."
+        "progress, and daily_summary for a day overview. The board also has a spending "
+        "planner: list_expenses/expenses_summary answer budget questions, create_expense "
+        "records subscriptions and wishes."
     ),
     stateless_http=True,
     # DNS-rebinding protection rejects LAN hostnames (421 behind the reverse
@@ -354,3 +367,188 @@ def analytics_impl(days: int = 30) -> dict:
 )
 def analytics(days: int = 30) -> dict:
     return analytics_impl(days)
+
+
+def _expense_dict(e) -> dict:
+    data = expense_out(e).model_dump(mode="json")
+    data["amount_rub"] = e.amount / 100
+    return data
+
+
+def _rub_to_kopecks(amount_rub: float) -> int:
+    """Guards rub_to_kopecks against non-finite input from an external agent (Task 5
+    carry-over, progress.md faf7efc..0270df4 review). The AI-draft path is protected by
+    ExpenseDraft's allow_inf_nan=False schema gate; create_expense/update_expense take
+    amount_rub straight off the wire with no schema in between, so float('inf')/
+    float('nan') would otherwise raise OverflowError/ValueError out of round() deep
+    inside rub_to_kopecks. Reject them here instead, as a clean ExpenseError the agent
+    can act on. rub_to_kopecks itself is untouched -- its other caller depends on its
+    current behaviour."""
+    if not math.isfinite(amount_rub):
+        raise expense_svc.ExpenseError(f"amount_rub must be a finite number, got {amount_rub!r}")
+    return rub_to_kopecks(amount_rub)
+
+
+def list_expenses_impl(
+    status: str | None = None,
+    tag: str | None = None,
+    query: str | None = None,
+    include_inactive: bool = False,
+) -> list[dict]:
+    with get_session_factory()() as db:
+        rows = expense_svc.list_expenses(
+            db,
+            status=ExpenseStatus(status) if status else None,
+            tag=tag,
+            query=query,
+            include_inactive=include_inactive,
+        )
+        return [_expense_dict(e) for e in rows]
+
+
+def create_expense_impl(
+    title: str,
+    amount_rub: float,
+    status: str = "wanted",
+    period: str | None = None,
+    anchor_date: str | None = None,
+    note: str = "",
+    tags: list[str] | None = None,
+) -> dict:
+    with get_session_factory()() as db:
+        e = expense_svc.create_expense(
+            db,
+            title=title,
+            amount=_rub_to_kopecks(amount_rub),
+            status=ExpenseStatus(status),
+            period=ExpensePeriod(period) if period else None,
+            anchor_date=date_type.fromisoformat(anchor_date) if anchor_date else None,
+            note=note,
+            tags=tags,
+            source=TaskSource.mcp,  # провенанс ставит сервер, не агент (§9)
+        )
+        return _expense_dict(e)
+
+
+def update_expense_impl(
+    expense_id: int,
+    title: str | None = None,
+    amount_rub: float | None = None,
+    status: str | None = None,
+    period: str | None = None,
+    anchor_date: str | None = None,
+    note: str | None = None,
+    tags: list[str] | None = None,
+    active: bool | None = None,
+    purchased_at: str | None = None,
+    clear_period: bool = False,
+) -> dict:
+    fields: dict = {}
+    if title is not None:
+        fields["title"] = title
+    if amount_rub is not None:
+        fields["amount"] = _rub_to_kopecks(amount_rub)
+    if status is not None:
+        fields["status"] = ExpenseStatus(status)
+    if period is not None:
+        fields["period"] = ExpensePeriod(period)
+    if anchor_date is not None:
+        fields["anchor_date"] = date_type.fromisoformat(anchor_date)
+    if note is not None:
+        fields["note"] = note
+    if tags is not None:
+        fields["tags"] = tags
+    if active is not None:
+        fields["active"] = active
+    if purchased_at is not None:
+        fields["purchased_at"] = date_type.fromisoformat(purchased_at)
+    if clear_period:
+        fields["clear_period"] = True
+    with get_session_factory()() as db:
+        return _expense_dict(expense_svc.update_expense(db, expense_id, **fields))
+
+
+def expenses_summary_impl() -> dict:
+    with get_session_factory()() as db:
+        return expense_svc.summary(db).model_dump(mode="json")
+
+
+@mcp.tool(
+    description=(
+        "Spending planner. Call this before answering questions about subscriptions, "
+        "recurring costs or the wishlist, and before creating an expense to avoid "
+        "duplicates. status: recurring|wanted|bought. Amounts come back both as kopecks "
+        "(amount) and rubles (amount_rub)."
+    )
+)
+def list_expenses(
+    status: str | None = None,
+    tag: str | None = None,
+    query: str | None = None,
+    include_inactive: bool = False,
+) -> list[dict]:
+    return list_expenses_impl(status, tag, query, include_inactive)
+
+
+@mcp.tool(
+    description=(
+        "Record a recurring payment (status=recurring; requires period day|month|quarter|year "
+        "and anchor_date YYYY-MM-DD of one charge) or a wanted one-off purchase "
+        "(status=wanted). amount_rub is the price in rubles."
+    )
+)
+def create_expense(
+    title: str,
+    amount_rub: float,
+    status: str = "wanted",
+    period: str | None = None,
+    anchor_date: str | None = None,
+    note: str = "",
+    tags: list[str] | None = None,
+) -> dict:
+    return create_expense_impl(title, amount_rub, status, period, anchor_date, note, tags)
+
+
+@mcp.tool(
+    description=(
+        "Edit an expense. active=false pauses a cancelled subscription; status=bought marks "
+        "a wish as purchased today; clear_period=true drops period/anchor_date when turning "
+        "a recurring expense into a wanted one."
+    )
+)
+def update_expense(
+    expense_id: int,
+    title: str | None = None,
+    amount_rub: float | None = None,
+    status: str | None = None,
+    period: str | None = None,
+    anchor_date: str | None = None,
+    note: str | None = None,
+    tags: list[str] | None = None,
+    active: bool | None = None,
+    purchased_at: str | None = None,
+    clear_period: bool = False,
+) -> dict:
+    return update_expense_impl(
+        expense_id,
+        title,
+        amount_rub,
+        status,
+        period,
+        anchor_date,
+        note,
+        tags,
+        active,
+        purchased_at,
+        clear_period,
+    )
+
+
+@mcp.tool(
+    description=(
+        "Monthly cost of active recurring expenses, charges due in the next 7 days, wishlist "
+        "total and this month's purchases (all in kopecks). Call this for any budget question."
+    )
+)
+def expenses_summary() -> dict:
+    return expenses_summary_impl()

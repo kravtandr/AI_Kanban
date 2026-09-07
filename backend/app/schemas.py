@@ -1,8 +1,16 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.models import EstimateBucket, TaskPriority, TaskSource, TaskStatus
+from app.models import (
+    EstimateBucket,
+    ExpensePeriod,
+    ExpenseStatus,
+    TaskPriority,
+    TaskSource,
+    TaskStatus,
+)
 
 _VALID_BUCKETS = {b.value for b in EstimateBucket}
 
@@ -254,5 +262,116 @@ class InsightsOut(BaseModel):
     data: AnalyticsOut
     facts: str
     text: str = ""
+    ai_ok: bool
+    ai_error: str | None = None
+
+
+class UpcomingCharge(BaseModel):
+    expense_id: int
+    title: str
+    amount: int
+    date: date
+
+
+class ExpenseSummaryOut(BaseModel):
+    monthly_recurring: int
+    upcoming: list[UpcomingCharge]
+    upcoming_total: int
+    wanted_total: int
+    bought_this_month: int
+    currency: str
+
+
+class ExpenseIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    amount: int = Field(ge=0)  # копейки
+    status: ExpenseStatus = ExpenseStatus.wanted
+    period: ExpensePeriod | None = None
+    anchor_date: date | None = None
+    # Дата покупки (только status=bought) и пауза (только status=recurring); без
+    # них create_expense не может выполнить то же, что и PATCH (обзор, находка #2).
+    purchased_at: date | None = None
+    active: bool = True
+    note: str = ""
+    tags: list[str] = Field(default_factory=list)
+    source: TaskSource = TaskSource.manual
+    ai_meta: dict | None = None
+
+
+class ExpensePatch(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    note: str | None = None
+    amount: int | None = Field(default=None, ge=0)
+    status: ExpenseStatus | None = None
+    period: ExpensePeriod | None = None
+    anchor_date: date | None = None
+    active: bool | None = None
+    purchased_at: date | None = None
+    tags: list[str] | None = None
+    sort_order: int | None = None
+    # Как clear_due_date/clear_estimate: PATCH идёт через exclude_unset, и
+    # «поле не прислали» неотличимо от «прислали null» (§7.2).
+    clear_period: bool = False
+
+
+class ExpenseMoveIn(BaseModel):
+    status: ExpenseStatus
+    sort_order: int | None = None
+
+
+class ExpenseOut(BaseModel):
+    id: int
+    title: str
+    note: str
+    amount: int
+    status: ExpenseStatus
+    period: ExpensePeriod | None
+    anchor_date: date | None
+    active: bool
+    purchased_at: date | None
+    tags: list[str]
+    sort_order: int
+    source: TaskSource
+    created_at: datetime
+    updated_at: datetime
+    # Считается сервером (§5), у неактивных и wanted/bought — null.
+    next_charge: date | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ExpenseDraft(BaseModel):
+    """Плоская схема черновика траты для слабой локальной модели (§8.1)."""
+
+    title: str = Field(description="Short expense name, max 200 chars")
+    amount_rub: float | None = Field(
+        default=None,
+        description="Price in rubles, decimals allowed, or null if not stated",
+        # json.loads() accepts inf/NaN; must fail validation here, not round() later (FR-5.5)
+        allow_inf_nan=False,
+    )
+    status: Literal["recurring", "wanted"] = Field(
+        default="wanted",
+        description=(
+            "recurring for repeating payments (subscriptions, rent), wanted for one-off purchases"
+        ),
+    )
+    period: ExpensePeriod | None = Field(
+        default=None, description="Only for recurring: day|month|quarter|year"
+    )
+    anchor_date: date | None = Field(
+        default=None, description="ISO date of one charge, only for recurring"
+    )
+    tags: list[str] = Field(default_factory=list, description="0-3 short lowercase tags")
+
+    @field_validator("title")
+    @classmethod
+    def _trim_title(cls, value: str) -> str:
+        return value.strip()[:200] or "Трата"
+
+
+class ExpenseDraftOut(BaseModel):
+    draft: ExpenseDraft
+    amount: int  # копейки, round(amount_rub * 100); 0 при null
     ai_ok: bool
     ai_error: str | None = None

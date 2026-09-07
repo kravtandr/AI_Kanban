@@ -15,6 +15,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import Column from "../components/Column";
 import FilterBar, { activeFilterCount, type Filters } from "../components/FilterBar";
+import NavTabs from "../components/NavTabs";
 import NewProjectModal from "../components/NewProjectModal";
 import NewTaskModal from "../components/NewTaskModal";
 import QuickAdd from "../components/QuickAdd";
@@ -318,6 +319,7 @@ export default function BoardPage() {
           <h1 className="shrink-0 font-mono text-base font-medium">
             <span className="caret">tasktracker</span>
           </h1>
+          <NavTabs />
           <div className="flex flex-1 justify-end md:justify-center">
             <QuickAdd projects={projects} />
           </div>

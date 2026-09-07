@@ -78,4 +78,4 @@ def test_ai_prompts_do_not_use_the_utc_day():
     source = Path(ai_module.__file__).read_text(encoding="utf-8")
 
     assert "date.today()" not in source
-    assert source.count("local_today()") == 2
+    assert source.count("local_today()") == 4  # Pin: bump when adding to ai.py

@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Optional static MCP token (bootstrap). DB tokens (kind=mcp) also work.
     mcp_token: str | None = None
 
+    # Валюта планировщика трат (SPEC §4.7 FR-8.4). Одна на всё приложение,
+    # конвертации нет; суммы хранятся целыми копейками. Env: EXPENSE_CURRENCY.
+    expense_currency: str = "RUB"
+
 
 @lru_cache
 def get_settings() -> Settings:
