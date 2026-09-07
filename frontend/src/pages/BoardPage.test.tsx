@@ -236,3 +236,72 @@ describe("BoardPage: перетаскивание и живой таймер", (
     await waitFor(() => expect(screen.queryByText(/▶/)).toBeNull());
   });
 });
+
+describe("BoardPage: мобильный ряд колонок", () => {
+  it("ошибка загрузки задач: мобильный ряд не рисуется вместе с колонками", async () => {
+    vi.spyOn(api, "projects").mockResolvedValue([PROJECT]);
+    vi.spyOn(api, "tasks").mockRejectedValue(new Error("boom"));
+    vi.spyOn(api, "analytics").mockResolvedValue(EMPTY_ANALYTICS);
+
+    renderBoard();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Не удалось загрузить задачи — проверьте соединение и обновите страницу"),
+      ).toBeInTheDocument(),
+    );
+
+    // Мобильный ряд теперь вложен в тот же гейт `!tasksQuery.isError`, что и
+    // <DndContext> (следствие переноса ряда внутрь контекста): при ошибке
+    // загрузки не рисуется ни он — ни табы, ни кнопка добавления, — ни сами
+    // колонки. Это осознанное изменение поведения: перетаскивать и
+    // переключать всё равно нечего, задач нет.
+    expect(screen.queryByRole("button", { name: /^Backlog/ })).toBeNull();
+    expect(screen.queryByLabelText("Добавить задачу в выбранную колонку")).toBeNull();
+  });
+
+  it("настоящий drag через PointerSensor: мобильные табы заменяются drop-зонами", async () => {
+    vi.spyOn(api, "projects").mockResolvedValue([PROJECT]);
+    vi.spyOn(api, "tasks").mockResolvedValue([TASK]);
+    vi.spyOn(api, "analytics").mockResolvedValue(EMPTY_ANALYTICS);
+
+    renderBoard();
+    await screen.findByText("Сделать UI");
+
+    // До перетаскивания: мобильный таб — настоящая <button> (счётчик живёт во
+    // вложенном <span>, якорь /^Backlog/ отсекает кнопку «Добавить задачу в
+    // Backlog» из десктопной колонки). Голого <div> с точным текстом
+    // заголовка — того, что рисует MobileDropZone, — пока нет: в десктопной
+    // колонке заголовок сидит в <h2>.
+    expect(screen.getByRole("button", { name: /^Backlog/ })).toBeInTheDocument();
+    expect(screen.queryByText("Backlog", { selector: "div" })).toBeNull();
+
+    const card = screen.getByText("Сделать UI").closest('[role="button"]') as HTMLElement;
+    firePointer(card, "pointerdown", { pointerId: 1, clientX: 20, clientY: 20, button: 0 });
+    // Сдвиг больше activationConstraint.distance (8px) — активирует drag.
+    firePointer(card, "pointermove", { pointerId: 1, clientX: 20, clientY: 40 });
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Backlog/ })).toBeNull());
+    expect(screen.getByText("Backlog", { selector: "div" })).toBeInTheDocument();
+
+    // Аккуратно завершаем drag, чтобы сенсор снял свои document-листенеры.
+    firePointer(card, "pointerup", { pointerId: 1, clientX: 20, clientY: 40 });
+  });
+
+  // ЧЕСТНАЯ ГРАНИЦА ДОКАЗАТЕЛЬСТВА: тест выше проверяет только цепочку
+  // «сенсор активировался → onDragStart → activeTask → мобильный ряд рисует
+  // MobileDropZone вместо табов». Переключателем служит React-состояние
+  // BoardPage, а не регистрация droppable, поэтому этот же переход происходил
+  // и ДО переноса ряда внутрь <DndContext> — тест покрывает вёрстку ряда на
+  // новом месте, но сам баг не различает.
+  // Сам баг — что зоны не регистрировались в dnd-kit (`useDroppable` читает
+  // `dispatch: noop` из дефолтного InternalContext, когда вызван вне
+  // провайдера, core.cjs.development.js) — в jsdom честно проверить нельзя:
+  // и до, и после переноса `isOver` у любой зоны остаётся false, потому что
+  // jsdom's getBoundingClientRect отдаёт нулевой прямоугольник, а
+  // rectIntersection при нулевой площади не находит пересечений (существующие
+  // drag-тесты выше именно поэтому подменяют rect'ы вручную).
+  // Доказательство того, что регистрация теперь идёт в реальный dispatch,
+  // опирается на чтение кода плюс структурный факт, что ряд стал потомком
+  // <DndContext>, а не его соседом.
+});

@@ -416,45 +416,6 @@ export default function BoardPage() {
           )}
         </div>
 
-        {/* Мобильный переключатель колонок: одна колонка на экран.
-          Во время перетаскивания табы уступают место drop-зонам статусов. */}
-        <div className="mb-2 flex items-center gap-1 md:hidden">
-          {activeTask ? (
-            STATUSES.map((s) => <MobileDropZone key={s.id} status={s.id} title={s.title} />)
-          ) : (
-            <>
-          <div className="no-scrollbar flex flex-1 items-center gap-1 overflow-x-auto">
-            {STATUSES.map((s) => {
-              const active = s.id === mobileStatus;
-              const count = countByStatus.get(s.id) ?? 0;
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => setMobileStatus(s.id)}
-                  aria-pressed={active}
-                  className={`tab ${active ? "bg-panel text-ink" : "text-dim"}`}
-                >
-                  {s.title}
-                  {count > 0 && (
-                    <span className={`ml-1.5 ${active ? "text-dim" : "text-dim/60"}`}>
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            onClick={() => setCreateStatus(mobileStatus)}
-            aria-label="Добавить задачу в выбранную колонку"
-            className="btn-icon h-8 w-8 font-mono text-base"
-          >
-            <span aria-hidden="true">+</span>
-          </button>
-            </>
-          )}
-        </div>
-
         <div aria-live="polite">
           {tasksQuery.isError && (
             <p className="p-4 text-sm text-danger">
@@ -472,6 +433,48 @@ export default function BoardPage() {
             onDragEnd={onDragEnd}
             onDragCancel={onDragCancel}
           >
+            {/* Мобильный переключатель колонок: одна колонка на экран.
+              Во время перетаскивания табы уступают место drop-зонам статусов.
+              Ряд живёт ВНУТРИ DndContext: useDroppable вне провайдера читает
+              из дефолтного контекста `dispatch: noop`, и drop-зоны молча не
+              регистрируются — на мобильном это единственная цель для дропа,
+              потому что скрытые колонки dnd-kit измерить не может. */}
+            <div className="mb-2 flex items-center gap-1 md:hidden">
+              {activeTask ? (
+                STATUSES.map((s) => <MobileDropZone key={s.id} status={s.id} title={s.title} />)
+              ) : (
+                <>
+                  <div className="no-scrollbar flex flex-1 items-center gap-1 overflow-x-auto">
+                    {STATUSES.map((s) => {
+                      const active = s.id === mobileStatus;
+                      const count = countByStatus.get(s.id) ?? 0;
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => setMobileStatus(s.id)}
+                          aria-pressed={active}
+                          className={`tab ${active ? "bg-panel text-ink" : "text-dim"}`}
+                        >
+                          {s.title}
+                          {count > 0 && (
+                            <span className={`ml-1.5 ${active ? "text-dim" : "text-dim/60"}`}>
+                              {count}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => setCreateStatus(mobileStatus)}
+                    aria-label="Добавить задачу в выбранную колонку"
+                    className="btn-icon h-8 w-8 font-mono text-base"
+                  >
+                    <span aria-hidden="true">+</span>
+                  </button>
+                </>
+              )}
+            </div>
             <div className="flex min-h-0 flex-1 gap-3 md:gap-4">
               {STATUSES.map((column) => (
                 <Column
