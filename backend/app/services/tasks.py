@@ -1,11 +1,22 @@
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Project, Task, TaskPriority, TaskSource, TaskStatus, utcnow
+from app.models import (
+    EstimateBucket,
+    Project,
+    Task,
+    TaskEstimate,
+    TaskEvent,
+    TaskPriority,
+    TaskSource,
+    TaskStatus,
+    utcnow,
+)
+from app.services import analytics
 from app.services.projects import get_inbox
 
 
@@ -108,6 +119,8 @@ def create_task(
     due_date: date | None = None,
     source: TaskSource = TaskSource.manual,
     ai_meta: dict | None = None,
+    estimate: EstimateBucket | None = None,  # comes from TaskIn.estimate (§9.1)
+    estimate_source: str = "user",  # task_estimates.source: "user" | "ai" | "mcp"
 ) -> Task:
     if project_id is None:
         project_id = get_inbox(db).id
@@ -128,6 +141,13 @@ def create_task(
     if status == TaskStatus.done:
         task.completed_at = utcnow()
     db.add(task)
+    db.flush()  # task.id only exists after the INSERT
+    now = utcnow()  # one instant for the whole transaction
+    if estimate is not None:
+        # Estimate BEFORE state: record_estimate derives before_work from the
+        # journal, so it must run before the in_progress event exists (§5.2).
+        analytics.record_estimate(db, task.id, estimate, at=now, source=estimate_source)
+    analytics.record_state(db, task, at=now)  # birth, including status-at-birth
     db.commit()
     db.refresh(task)
     return task
@@ -148,6 +168,19 @@ def update_task(db: Session, task_id: int, **fields) -> Task:
         task.due_date = None
     if fields.get("status") is not None:
         _apply_status(db, task, fields["status"])
+    now = utcnow()
+    if fields.get("clear_estimate"):
+        # A tombstone, not a DELETE: the journal is append-only (§4). Checked
+        # FIRST, like clear_due_date: {"estimate":"M","clear_estimate":true} is a
+        # clear.
+        analytics.record_estimate(
+            db, task.id, None, at=now, source=fields.get("estimate_source") or "user"
+        )
+    elif fields.get("estimate") is not None:
+        analytics.record_estimate(
+            db, task.id, fields["estimate"], at=now, source=fields.get("estimate_source") or "user"
+        )
+    analytics.record_state(db, task, at=now)  # catches both status and project changes
     db.commit()
     db.refresh(task)
     return task
@@ -191,6 +224,7 @@ def _apply_status(
 def move_task(db: Session, task_id: int, status: TaskStatus, sort_order: int | None = None) -> Task:
     task = get_task(db, task_id)
     _apply_status(db, task, status, sort_order)
+    analytics.record_state(db, task)
     db.commit()
     db.refresh(task)
     return task
@@ -199,6 +233,7 @@ def move_task(db: Session, task_id: int, status: TaskStatus, sort_order: int | N
 def delete_task(db: Session, task_id: int) -> None:
     task = get_task(db, task_id)
     task.deleted_at = utcnow()
+    analytics.record_state(db, task, at=task.deleted_at)  # closes the open interval
     db.commit()
 
 
@@ -208,6 +243,14 @@ def purge_deleted_tasks(db: Session) -> int:
     stale = list(
         db.scalars(select(Task).where(Task.deleted_at.is_not(None), Task.deleted_at < cutoff))
     )
+    # Hard delete destroys the measurement history too (§5.3). The rows go
+    # explicitly, with the FK cascade as a database-level backstop only: a
+    # restricting FK would kill this daily purge silently and forever, because
+    # _purge_loop swallows and logs exceptions (main.py:174-175).
+    ids = [task.id for task in stale]
+    if ids:
+        db.execute(delete(TaskEvent).where(TaskEvent.task_id.in_(ids)))
+        db.execute(delete(TaskEstimate).where(TaskEstimate.task_id.in_(ids)))
     for task in stale:
         db.delete(task)
     db.commit()
@@ -221,14 +264,30 @@ def _local_timezone() -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
-def daily_summary(db: Session, day: date | None = None) -> dict:
-    # "Today" is interpreted in the configured timezone; completed_at is stored
-    # as naive UTC, so convert the local-day boundaries to naive UTC to compare.
+def local_today() -> date:
+    """Today in the configured timezone (§7.3).
+
+    date.today() inside the container is a UTC day (TZ is not set in
+    docker-compose.yml and python:3.12-slim lives in UTC), so between 00:00 and
+    03:00 Moscow time it names yesterday. Every place that needs a named day goes
+    through this helper.
+    """
+    return datetime.now(_local_timezone()).date()
+
+
+def local_day_bounds(day: date) -> tuple[datetime, datetime]:
+    """[start, end) of a local day as naive UTC — the form timestamps are stored in."""
     tz = _local_timezone()
-    day = day or datetime.now(tz).date()
-    local_start = datetime(day.year, day.month, day.day, tzinfo=tz)
-    day_start = local_start.astimezone(UTC).replace(tzinfo=None)
-    day_end = (local_start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None)
+    start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    return (
+        start.astimezone(UTC).replace(tzinfo=None),
+        (start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None),
+    )
+
+
+def daily_summary(db: Session, day: date | None = None) -> dict:
+    day = day or local_today()
+    day_start, day_end = local_day_bounds(day)
     base = (
         select(Task).join(Project).where(Task.deleted_at.is_(None), Project.archived_at.is_(None))
     )

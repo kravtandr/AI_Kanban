@@ -46,6 +46,7 @@ const VALUES: TaskFormValues = {
   priority: "medium",
   tags: "",
   due_date: "",
+  estimate: "",
 };
 
 describe("TaskForm — диктовка описания", () => {
@@ -176,5 +177,42 @@ describe("TaskForm — aria-live индикатора диктовки", () => {
     const notice = screen.getByText("Ничего не распознано");
     expect(notice).toHaveAttribute("aria-hidden", "true");
     expect(notice.className).not.toContain("field-error");
+  });
+});
+
+describe("TaskForm — оценка", () => {
+  it("по умолчанию выбран ⌀ — оценки нет", () => {
+    render(<TaskForm values={VALUES} projects={PROJECTS} onChange={vi.fn()} />);
+
+    expect(screen.getByLabelText("Оценка")).toHaveValue("");
+  });
+
+  it("выбор бакета уходит в onChange", async () => {
+    const onChange = vi.fn();
+    render(<TaskForm values={VALUES} projects={PROJECTS} onChange={onChange} />);
+
+    await userEvent.selectOptions(screen.getByLabelText("Оценка"), "M");
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ estimate: "M" }));
+  });
+
+  it("снятие оценки отдаёт пустую строку, а не null", async () => {
+    const onChange = vi.fn();
+    render(
+      <TaskForm values={{ ...VALUES, estimate: "L" }} projects={PROJECTS} onChange={onChange} />,
+    );
+
+    await userEvent.selectOptions(screen.getByLabelText("Оценка"), "");
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ estimate: "" }));
+  });
+
+  it("в списке ровно пять бакетов и пункт ⌀", () => {
+    render(<TaskForm values={VALUES} projects={PROJECTS} onChange={vi.fn()} />);
+
+    const options = Array.from(
+      screen.getByLabelText("Оценка").querySelectorAll("option"),
+    ).map((o) => o.value);
+    expect(options).toEqual(["", "XS", "S", "M", "L", "XL"]);
   });
 });

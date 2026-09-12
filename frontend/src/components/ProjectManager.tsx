@@ -17,6 +17,7 @@ export default function ProjectManager({ onClose }: { onClose: () => void }) {
       client.invalidateQueries({ queryKey: ["projects"] });
       client.invalidateQueries({ queryKey: ["tasks"] });
       client.invalidateQueries({ queryKey: ["task"] });
+      client.invalidateQueries({ queryKey: ["analytics"] });
     },
   });
   function edit(project: Project) {

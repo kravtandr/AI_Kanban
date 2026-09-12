@@ -1,6 +1,6 @@
 import { useDroppable } from "@dnd-kit/core";
 import type { MutableRefObject } from "react";
-import type { Project, Status, Task } from "../types";
+import type { Project, RunningTask, Status, Task } from "../types";
 import TaskCard from "./TaskCard";
 
 interface Props {
@@ -8,6 +8,11 @@ interface Props {
   title: string;
   tasks: Task[];
   projects: Map<number, Project>;
+  /** Открытые заходы по task_id. Пустая карта — аналитика недоступна,
+   * доска работает без таймеров. */
+  running: Map<number, RunningTask>;
+  /** Секунды с момента ответа аналитики; одна на всю доску (§12.1). */
+  sinceFetchSeconds: number;
   onOpen: (task: Task) => void;
   onContextMenu: (task: Task, at: { x: number; y: number }) => void;
   onAdd: (status: Status) => void;
@@ -24,6 +29,8 @@ export default function Column({
   title,
   tasks,
   projects,
+  running,
+  sinceFetchSeconds,
   onOpen,
   onContextMenu,
   onAdd,
@@ -59,6 +66,8 @@ export default function Column({
             key={task.id}
             task={task}
             project={projects.get(task.project_id)}
+            running={running.get(task.id) ?? null}
+            sinceFetchSeconds={sinceFetchSeconds}
             onOpen={onOpen}
             onContextMenu={onContextMenu}
             clickGuard={clickGuard}

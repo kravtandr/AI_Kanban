@@ -1,4 +1,14 @@
-import type { DraftResponse, Project, Task, User } from "./types";
+import type {
+  Analytics,
+  DraftResponse,
+  Expense,
+  ExpenseDraftResponse,
+  ExpenseSummary,
+  Insights,
+  Project,
+  Task,
+  User,
+} from "./types";
 
 const BASE = "/api/v1";
 
@@ -56,7 +66,7 @@ export const api = {
   tasks: (params: URLSearchParams) => request<Task[]>(`/tasks?${params.toString()}`),
   createTask: (body: Partial<Task> & { title: string; ai_meta?: unknown }) =>
     request<Task>("/tasks", { method: "POST", body: JSON.stringify(body) }),
-  patchTask: (id: number, body: Partial<Task> & { clear_due_date?: boolean }) =>
+  patchTask: (id: number, body: Partial<Task> & { clear_due_date?: boolean; clear_estimate?: boolean }) =>
     request<Task>(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   moveTask: (id: number, status: string, sort_order?: number) =>
     request<Task>(`/tasks/${id}/move`, { method: "POST", body: JSON.stringify({ status, sort_order }) }),
@@ -72,4 +82,27 @@ export const api = {
     form.append("file", blob, blob.type.includes("mp4") ? "audio.mp4" : "audio.webm");
     return request<{ text: string }>("/ai/transcribe", { method: "POST", body: form });
   },
+  analytics: (days: number) => request<Analytics>(`/analytics?days=${days}`),
+  // POST, а не GET: инсайты тратят токены и обязаны быть явным действием,
+  // которое react-query не пре-фетчит (NFR-6, §10.1).
+  insights: (days: number) =>
+    request<Insights>("/ai/insights", { method: "POST", body: JSON.stringify({ days }) }),
+
+  expenses: (params: URLSearchParams) => request<Expense[]>(`/expenses?${params.toString()}`),
+  createExpense: (body: Partial<Expense> & { title: string; amount: number; ai_meta?: unknown }) =>
+    request<Expense>("/expenses", { method: "POST", body: JSON.stringify(body) }),
+  patchExpense: (id: number, body: Partial<Expense> & { clear_period?: boolean }) =>
+    request<Expense>(`/expenses/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  moveExpense: (id: number, status: string, sort_order?: number) =>
+    request<Expense>(`/expenses/${id}/move`, {
+      method: "POST",
+      body: JSON.stringify({ status, sort_order }),
+    }),
+  deleteExpense: (id: number) => request<void>(`/expenses/${id}`, { method: "DELETE" }),
+  expenseSummary: () => request<ExpenseSummary>("/expenses/summary"),
+  draftExpense: (text: string) =>
+    request<ExpenseDraftResponse>("/ai/draft-expense", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
 };

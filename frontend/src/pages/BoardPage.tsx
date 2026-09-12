@@ -17,13 +17,16 @@ import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import Column from "../components/Column";
 import FilterBar, { activeFilterCount, type Filters } from "../components/FilterBar";
+import NavTabs from "../components/NavTabs";
 import NewProjectModal from "../components/NewProjectModal";
 import NewTaskModal from "../components/NewTaskModal";
 import ProjectManager from "../components/ProjectManager";
 import QuickAdd from "../components/QuickAdd";
+import StatsModal from "../components/StatsModal";
 import { TaskCardView } from "../components/TaskCard";
 import TaskContextMenu from "../components/TaskContextMenu";
 import TaskModal from "../components/TaskModal";
+import { invalidateBoard } from "../lib/invalidateBoard";
 import { findProjectByName } from "../lib/projectMenu";
 import type { Status, Task } from "../types";
 import { PRIORITIES, STATUSES } from "../types";
@@ -38,6 +41,10 @@ function filtersFromParams(params: URLSearchParams): Filters {
 }
 
 const MOVE_MUTATION_KEY = ["move-task"];
+
+/** Как часто двигаем «сейчас». 30 с — шаг живого таймера на карточке:
+ * чаще не нужно (минуты), реже — заметно отстаёт. */
+const TIMER_TICK_MS = 30_000;
 
 /** Мобильная drop-зона статуса: невидимые колонки (display:none) не могут
  * принять карточку, поэтому на время перетаскивания табы статусов
@@ -63,6 +70,7 @@ export default function BoardPage() {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [showProjects, setShowProjects] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   // Контекстное меню и создание проекта — транзиентный UI, в URL не живут.
   const [menuFor, setMenuFor] = useState<{ task: Task; at: { x: number; y: number } } | null>(null);
   const [creatingProjectFor, setCreatingProjectFor] = useState<Task | null>(null);
@@ -84,6 +92,11 @@ export default function BoardPage() {
   const openTaskById = (task: Task) => updateParams((p) => p.set("task", String(task.id)), false);
   const closeTask = () => updateParams((p) => p.delete("task"));
 
+  // Бюджет плана на сегодня живёт в URL, как остальное состояние доски.
+  // Дефолт 4 ч; мусор в параметре молча деградирует в дефолт.
+  const budgetHours = Number(searchParams.get("budget")) || 4;
+  const setBudgetHours = (hours: number) => updateParams((p) => p.set("budget", String(hours)));
+
   // После drag браузер шлёт click по исходной карточке — гасим его,
   // чтобы перетаскивание не открывало модалку задачи.
   const suppressCardClick = useRef(false);
@@ -93,6 +106,23 @@ export default function BoardPage() {
   );
 
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: api.projects });
+
+  // Аналитика нужна доске ровно ради одного — живого таймера на карточках.
+  // Объектная сигнатура react-query v5, как у projectsQuery и tasksQuery
+  // рядом. Ошибка запроса доску не ломает: таймеров просто нет.
+  const analyticsQuery = useQuery({
+    queryKey: ["analytics", 30],
+    queryFn: () => api.analytics(30),
+    staleTime: 30_000,
+  });
+
+  // ОДИН интервал на всю доску, а не по одному на карточку: полсотни
+  // собственных таймеров будили бы React полсотни раз за тик.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), TIMER_TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   // Поиск дебаунсим: запрос уходит не на каждый символ, само поле ввода
   // остаётся контролируемым без задержки.
@@ -119,7 +149,7 @@ export default function BoardPage() {
 
   const moveMutation = useMutation({
     mutationKey: MOVE_MUTATION_KEY,
-    mutationFn: ({ id, status, sortOrder }: { id: number; status: Status; sortOrder?: number }) => api.moveTask(id, status, sortOrder),
+    mutationFn: ({ id, status, sortOrder }: { id: number; status: Status; sortOrder?: number }) => (sortOrder === undefined ? api.moveTask(id, status) : api.moveTask(id, status, sortOrder)),
     onMutate: async ({ id, status, sortOrder }) => {
       // Optimistic update with rollback on error (FR-4.2).
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
@@ -151,9 +181,7 @@ export default function BoardPage() {
       // Инвалидируем только когда эта мутация — последняя: иначе refetch
       // среди быстрых перетаскиваний вернёт устаревшее состояние
       if (queryClient.isMutating({ mutationKey: MOVE_MUTATION_KEY }) === 1) {
-        queryClient.invalidateQueries({ queryKey: ["tasks"] });
-        queryClient.invalidateQueries({ queryKey: ["task"] });
-        queryClient.invalidateQueries({ queryKey: ["projects"] });
+        invalidateBoard(queryClient);
       }
     },
   });
@@ -161,10 +189,7 @@ export default function BoardPage() {
   const setProjectMutation = useMutation({
     mutationFn: ({ id, projectId }: { id: number; projectId: number }) =>
       api.patchTask(id, { project_id: projectId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-    },
+    onSuccess: () => invalidateBoard(queryClient),
   });
 
   /** Создать проект и сразу перенести в него задачу.
@@ -255,6 +280,16 @@ export default function BoardPage() {
   const projects = projectsQuery.data ?? [];
   const projectMap = new Map(projects.map((p) => [p.id, p]));
   const tasks = tasksQuery.data ?? [];
+  // Точка отсчёта — dataUpdatedAt самого запроса: epoch-миллисекунды по
+  // часам браузера. coverage.as_of участвовать в этой формуле НЕ имеет
+  // права — это поле подписи, и наивный UTC, разобранный new Date(...),
+  // дал бы на московском браузере +3ч (§12.1).
+  const analyticsUpdatedAt = analyticsQuery.dataUpdatedAt;
+  const sinceFetchSeconds = analyticsUpdatedAt ? (now - analyticsUpdatedAt) / 1000 : 0;
+  const runningByTask = useMemo(
+    () => new Map((analyticsQuery.data?.running ?? []).map((r) => [r.task_id, r])),
+    [analyticsQuery.data],
+  );
   const openTaskId = Number(searchParams.get("task")) || null;
   const openTaskQuery = useQuery({
     queryKey: ["task", openTaskId],
@@ -283,9 +318,18 @@ export default function BoardPage() {
           <h1 className="shrink-0 font-mono text-base font-medium">
             <span className="caret">tasktracker</span>
           </h1>
+          <NavTabs />
           <div className="flex flex-1 justify-end md:justify-center">
             <QuickAdd projects={projects} />
           </div>
+          <button
+            onClick={() => setShowStats(true)}
+            aria-label="Статистика времени"
+            title="Статистика времени"
+            className="shrink-0 font-mono text-xs text-dim transition hover:text-ink"
+          >
+            время
+          </button>
           <button
             onClick={() => setShowFilters((v) => !v)}
             aria-label={filterCount > 0 ? `Фильтры, активных: ${filterCount}` : "Фильтры"}
@@ -394,7 +438,7 @@ export default function BoardPage() {
 
         {/* Мобильный переключатель колонок: одна колонка на экран.
           Во время перетаскивания табы уступают место drop-зонам статусов. */}
-        <div className="mb-2 flex items-center gap-1 md:hidden">
+        {!tasksQuery.isError && <div className="mb-2 flex items-center gap-1 md:hidden">
           {activeTask ? (
             STATUSES.map((s) => <MobileDropZone key={s.id} status={s.id} title={s.title} />)
           ) : (
@@ -429,7 +473,7 @@ export default function BoardPage() {
           </button>
             </>
           )}
-        </div>
+        </div>}
 
         <div aria-live="polite">
           {tasksQuery.isError && (
@@ -448,6 +492,8 @@ export default function BoardPage() {
                   title={column.title}
                   tasks={tasks.filter((t) => t.status === column.id).sort((a, b) => a.sort_order - b.sort_order)}
                   projects={projectMap}
+                  running={runningByTask}
+                  sinceFetchSeconds={sinceFetchSeconds}
                   onOpen={openTaskById}
                   onContextMenu={(task, at) => setMenuFor({ task, at })}
                   onAdd={setCreateStatus}
@@ -461,6 +507,8 @@ export default function BoardPage() {
                 <TaskCardView
                   task={activeTask}
                   project={projectMap.get(activeTask.project_id)}
+                  running={runningByTask.get(activeTask.id) ?? null}
+                  sinceFetchSeconds={sinceFetchSeconds}
                   overlay
                 />
               )}
@@ -502,6 +550,14 @@ export default function BoardPage() {
         <NewProjectModal
           onCreate={(name) => createProjectAndMove(creatingProjectFor, name)}
           onClose={() => setCreatingProjectFor(null)}
+        />
+      )}
+      {showStats && (
+        <StatsModal
+          tasks={tasks}
+          budgetHours={budgetHours}
+          onBudgetChange={setBudgetHours}
+          onClose={() => setShowStats(false)}
         />
       )}
     </div>

@@ -52,7 +52,13 @@ def test_ai_draft_title_can_be_saved(auth_client, monkeypatch):
 
 def test_rest_board_does_not_silently_truncate(auth_client):
     with db_module.get_session_factory()() as db:
-        db.add_all([Task(title=str(i), project_id=1, sort_order=i) for i in range(501)])
+        from app.services import analytics
+
+        entries = [Task(title=str(i), project_id=1, sort_order=i) for i in range(501)]
+        db.add_all(entries)
+        db.flush()
+        for task in entries:
+            analytics.record_state(db, task)
         db.commit()
     assert len(auth_client.get("/api/v1/tasks").json()) == 501
 
@@ -85,7 +91,9 @@ def test_ai_relative_dates_use_configured_timezone(auth_client, monkeypatch):
             assert str(tz) == "Pacific/Kiritimati"
             return cls(2030, 1, 2, 1, 0, tzinfo=tz)
 
-    monkeypatch.setattr(ai, "datetime", FrozenDatetime, raising=False)
+    from app.services import tasks as task_svc
+
+    monkeypatch.setattr(task_svc, "datetime", FrozenDatetime)
 
     def fake_call(system, message):
         assert "Today is 2030-01-02." in message
@@ -159,3 +167,20 @@ def test_stt_logs_do_not_expose_credentials(client, monkeypatch, caplog):
 def test_mcp_can_clear_due_date(client):
     task = mcp_server.create_task_impl("Dated", due_date="2030-01-01")
     assert mcp_server.update_task_impl(task["id"], due_date="")["due_date"] is None
+
+
+def test_expense_ai_failure_does_not_expose_credentials(auth_client, monkeypatch, caplog):
+    from app.config import get_settings
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("Authorization failed token=secret-upstream-value")
+
+    monkeypatch.setattr(ai, "_call_model", fail)
+    response = auth_client.post("/api/v1/ai/draft-expense", json={"text": "Subscription"})
+    assert response.status_code == 200
+    assert response.json()["ai_ok"] is False
+    assert "secret-upstream-value" not in response.text
+    assert "secret-upstream-value" not in caplog.text

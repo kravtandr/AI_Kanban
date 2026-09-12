@@ -1,4 +1,4 @@
-from tests.conftest import PASSWORD, USERNAME
+from conftest import PASSWORD, USERNAME
 
 
 def test_api_requires_auth(client):
