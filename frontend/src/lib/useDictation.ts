@@ -147,6 +147,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
       recorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
         recorderRef.current = null;
+        if (unmountedRef.current) return;
         const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
         if (blob.size === 0) {
           setState("idle");
@@ -155,6 +156,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
         setState("transcribing");
         try {
           const { text } = await api.transcribe(blob);
+          if (unmountedRef.current) return;
           if (text) onTextRef.current(text);
           else setNotice("Ничего не распознано");
         } catch (err) {

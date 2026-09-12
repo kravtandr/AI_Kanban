@@ -34,3 +34,29 @@ def test_login_rate_limited(client):
 
 def test_healthz_is_public(client):
     assert client.get("/healthz").status_code == 200
+
+
+def test_login_limit_reserves_inflight_attempt(client, monkeypatch):
+    from app import db as db_module
+    from app.config import get_settings
+    from app.services import auth
+
+    monkeypatch.setattr(get_settings(), "login_rate_limit_attempts", 1)
+    nested_results = []
+    with db_module.get_session_factory()() as db:
+
+        def password_check(*args):
+            try:
+                auth.login(db, "missing-user", "bad", "same-ip")
+            except auth.RateLimited:
+                nested_results.append("limited")
+            except auth.AuthError:
+                nested_results.append("not-limited")
+            return False
+
+        monkeypatch.setattr(auth, "verify_password", password_check)
+        try:
+            auth.login(db, USERNAME, "bad", "same-ip")
+        except auth.AuthError:
+            pass
+    assert nested_results == ["limited"]

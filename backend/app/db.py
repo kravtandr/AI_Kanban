@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
@@ -13,7 +13,17 @@ def _make_engine(url: str):
     kwargs: dict = {}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
-    return create_engine(url, **kwargs)
+    engine = create_engine(url, **kwargs)
+    if url.startswith("sqlite"):
+
+        @event.listens_for(engine, "connect")
+        def configure_sqlite(connection, _record):
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.create_function(
+                "lower", 1, lambda value: value.lower() if isinstance(value, str) else value
+            )
+
+    return engine
 
 
 def get_engine():

@@ -94,7 +94,7 @@ def create_task_impl(
     title: str,
     description: str = "",
     project: str | None = None,
-    priority: str = "medium",
+    priority: str | None = None,
     tags: list[str] | None = None,
     due_date: str | None = None,
     auto_format: bool = False,
@@ -113,8 +113,8 @@ def create_task_impl(
                 title = draft.title
                 description = draft.description or description
                 project = project or draft.project
-                priority = draft.priority.value
-                tags = tags or draft.tags
+                priority = priority if priority is not None else draft.priority.value
+                tags = tags if tags is not None else draft.tags
                 due_date = due_date or (draft.due_date.isoformat() if draft.due_date else None)
                 ai_meta = {
                     "source_text": source_text,
@@ -134,7 +134,7 @@ def create_task_impl(
             title=title,
             description=description,
             project_id=project_id,
-            priority=TaskPriority(priority),
+            priority=TaskPriority(priority or "medium"),
             tags=tags or [],
             due_date=date_type.fromisoformat(due_date) if due_date else None,
             source=TaskSource.mcp,
@@ -168,6 +168,7 @@ def update_task_impl(
             priority=TaskPriority(priority) if priority else None,
             tags=tags,
             due_date=date_type.fromisoformat(due_date) if due_date else None,
+            clear_due_date=due_date == "",
         )
         return _task_dict(task)
 
@@ -232,7 +233,7 @@ def create_task(
     title: str,
     description: str = "",
     project: str | None = None,
-    priority: str = "medium",
+    priority: str | None = None,
     tags: list[str] | None = None,
     due_date: str | None = None,
     auto_format: bool = False,
@@ -240,7 +241,12 @@ def create_task(
     return create_task_impl(title, description, project, priority, tags, due_date, auto_format)
 
 
-@mcp.tool(description="Update fields of an existing task. Only provided fields are changed.")
+@mcp.tool(
+    description=(
+        "Update fields of an existing task. Only provided fields are changed. "
+        "Pass due_date as an empty string to remove a deadline."
+    )
+)
 def update_task(
     task_id: int,
     title: str | None = None,

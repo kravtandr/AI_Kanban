@@ -10,7 +10,7 @@ All failures degrade gracefully: the caller always gets a usable draft
 import json
 import logging
 import re
-from datetime import date
+from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -26,6 +26,7 @@ from app.services.projects import (
     list_projects,
     update_project,
 )
+from app.services.tasks import _local_timezone
 
 log = logging.getLogger(__name__)
 
@@ -225,25 +226,25 @@ def draft_task(db: Session, text: str) -> DraftResult:
     settings = get_settings()
     if not llm_configured(settings):
         return DraftResult(_fallback_draft(text), ok=False, error="LLM is not configured")
-    user_message = (
-        f"Today is {date.today().isoformat()}.\n\n{_project_context(db)}\n\nRaw note:\n{text}"
-    )
+    today = datetime.now(_local_timezone()).date().isoformat()
+    user_message = f"Today is {today}.\n\n{_project_context(db)}\n\nRaw note:\n{text}"
     try:
         draft, tin, tout = _call_model(SYSTEM_PROMPT, user_message)
         _log_usage(db, "draft", True, tin, tout)
         return DraftResult(draft, ok=True)
     except Exception as exc:  # degrade, never block task creation (FR-5.5)
-        log.warning("LLM draft failed: %s", exc)
+        log.warning("LLM draft failed (%s)", type(exc).__name__)
         _log_usage(db, "draft", False)
-        return DraftResult(_fallback_draft(text), ok=False, error=str(exc))
+        return DraftResult(_fallback_draft(text), ok=False, error="LLM service unavailable")
 
 
 def enhance_task(db: Session, task: Task) -> DraftResult:
     settings = get_settings()
     if not llm_configured(settings):
         return DraftResult(_fallback_draft(task.title), ok=False, error="LLM is not configured")
+    today = datetime.now(_local_timezone()).date().isoformat()
     user_message = (
-        f"Today is {date.today().isoformat()}.\n\n{_project_context(db)}\n\n"
+        f"Today is {today}.\n\n{_project_context(db)}\n\n"
         "Improve the following existing task. Keep its meaning, rewrite title/description "
         "for clarity, suggest tags and priority.\n"
         f"Title: {task.title}\nDescription:\n{task.description or '(empty)'}\n"
@@ -254,9 +255,9 @@ def enhance_task(db: Session, task: Task) -> DraftResult:
         _log_usage(db, "enhance", True, tin, tout)
         return DraftResult(draft, ok=True)
     except Exception as exc:
-        log.warning("LLM enhance failed: %s", exc)
+        log.warning("LLM enhance failed (%s)", type(exc).__name__)
         _log_usage(db, "enhance", False)
-        return DraftResult(_fallback_draft(task.title), ok=False, error=str(exc))
+        return DraftResult(_fallback_draft(task.title), ok=False, error="LLM service unavailable")
 
 
 def _unglue_project_name(db: Session, name: str) -> str:

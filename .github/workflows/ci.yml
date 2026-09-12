@@ -8,6 +8,20 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tasktracker
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: tasktracker_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tasktracker -d tasktracker_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://tasktracker:ci-test-only@localhost:5432/tasktracker_test
     steps:
       - uses: actions/checkout@v4
 
@@ -35,4 +49,6 @@ jobs:
         run: make test
 
       - name: Build
+        env:
+          POSTGRES_PASSWORD: ci-build-placeholder
         run: make build

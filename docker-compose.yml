@@ -62,16 +62,8 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./backups:/backups
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        while true; do
-          pg_dump -h postgres -U tasktracker tasktracker | gzip > "/backups/tasktracker-$$(date +%F-%H%M%S).sql.gz" \
-            && echo "backup done: $$(date)" \
-            || echo "backup FAILED: $$(date)"
-          find /backups -name 'tasktracker-*.sql.gz' -mtime +14 -delete
-          sleep 86400
-        done
+      - ./deploy/backup.sh:/usr/local/bin/backup.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/backup.sh"]
     depends_on:
       postgres:
         condition: service_healthy

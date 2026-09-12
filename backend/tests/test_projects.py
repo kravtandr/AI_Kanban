@@ -86,43 +86,47 @@ def test_create_project_without_color_gets_auto_assigned(auth_client):
 
 
 def test_update_project_color_auto_assigns_free_color(auth_client):
-    first = auth_client.post("/api/v1/projects", json={"name": "Alpha", "color": "#f59e0b"}).json()
+    auth_client.post("/api/v1/projects", json={"name": "Alpha", "color": "#f59e0b"})
     second = auth_client.post("/api/v1/projects", json={"name": "Beta", "color": "#38bdf8"}).json()
-    response = auth_client.patch(
-        f"/api/v1/projects/{second['id']}", json={"color": "#f59e0b"}
-    )
+    response = auth_client.patch(f"/api/v1/projects/{second['id']}", json={"color": "#f59e0b"})
     assert response.status_code == 200
     assert response.json()["color"] != "#f59e0b"
 
 
 def test_update_project_color_same_color_is_preserved(auth_client):
-    project = auth_client.post("/api/v1/projects", json={"name": "Gamma", "color": "#a78bfa"}).json()
-    response = auth_client.patch(
-        f"/api/v1/projects/{project['id']}", json={"color": "#a78bfa"}
-    )
+    project = auth_client.post(
+        "/api/v1/projects", json={"name": "Gamma", "color": "#a78bfa"}
+    ).json()
+    response = auth_client.patch(f"/api/v1/projects/{project['id']}", json={"color": "#a78bfa"})
     assert response.status_code == 200
     assert response.json()["color"] == "#a78bfa"
 
 
 def test_ensure_unique_colors_migration_one_time(client):
     with db_module.get_session_factory()() as db:
-        db.add_all([
-            Project(name="Gray", color="#6b7280"),
-            Project(name="Dup", color="#f59e0b"),
-            Project(name="Dup2", color="#f59e0b"),
-        ])
+        db.add_all(
+            [
+                Project(name="Gray", color="#6b7280"),
+                Project(name="Dup", color="#f59e0b"),
+                Project(name="Dup2", color="#f59e0b"),
+            ]
+        )
         db.commit()
 
         project_svc.ensure_unique_project_colors(db)
         first_run = {
             p.name: p.color
-            for p in db.scalars(select(Project).where(Project.is_inbox.is_(False)).order_by(Project.id))
+            for p in db.scalars(
+                select(Project).where(Project.is_inbox.is_(False)).order_by(Project.id)
+            )
         }
 
         project_svc.ensure_unique_project_colors(db)
         second_run = {
             p.name: p.color
-            for p in db.scalars(select(Project).where(Project.is_inbox.is_(False)).order_by(Project.id))
+            for p in db.scalars(
+                select(Project).where(Project.is_inbox.is_(False)).order_by(Project.id)
+            )
         }
 
     assert first_run == second_run

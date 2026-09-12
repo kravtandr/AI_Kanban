@@ -1,5 +1,5 @@
-import { useDraggable } from "@dnd-kit/core";
-import { useRef, type MutableRefObject } from "react";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import { formatDue, isOverdue } from "../lib/dates";
 import { PRIORITIES, type Project, type Task } from "../types";
 
@@ -84,6 +84,7 @@ export default function TaskCard({ task, project, onOpen, onContextMenu, clickGu
     id: `task-${task.id}`,
     data: { task },
   });
+  const { setNodeRef: setDropRef } = useDroppable({ id: `task-${task.id}`, data: { task } });
   // Часть браузеров шлёт click вслед за contextmenu по долгому нажатию. Без
   // гашения пользователь получал бы модалку задачи под открытым меню.
   // Метка времени, а не флаг: зависший флаг съел бы следующий честный click.
@@ -91,6 +92,8 @@ export default function TaskCard({ task, project, onOpen, onContextMenu, clickGu
   // iOS Safari по долгому нажатию не шлёт contextmenu вообще — там этого
   // события нет. Поэтому на тач-устройствах распознаём жест сами.
   const longPress = useRef<{ timer: number; x: number; y: number } | null>(null);
+
+  useEffect(() => () => { if (longPress.current) clearTimeout(longPress.current.timer); }, []);
 
   const cancelLongPress = () => {
     if (!longPress.current) return;
@@ -100,7 +103,7 @@ export default function TaskCard({ task, project, onOpen, onContextMenu, clickGu
 
   return (
     <div
-      ref={setNodeRef}
+      ref={(node) => { setNodeRef(node); setDropRef(node); }}
       {...listeners}
       {...attributes}
       onPointerDown={(e) => {

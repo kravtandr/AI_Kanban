@@ -27,8 +27,8 @@ const STORAGE_KEY = "tasktracker.quickadd.drafts";
 
 function fallbackForm(text: string, projectId: number): TaskFormValues {
   return {
-    title: text,
-    description: "",
+    title: text.slice(0, 200),
+    description: text.length > 200 ? text : "",
     project_id: projectId,
     status: "todo",
     priority: "medium",

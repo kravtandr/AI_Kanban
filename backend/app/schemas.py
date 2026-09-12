@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models import TaskPriority, TaskSource, TaskStatus
 
@@ -18,14 +18,24 @@ class UserOut(BaseModel):
 
 
 class ProjectIn(BaseModel):
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
     name: str = Field(min_length=1, max_length=100)
-    color: str | None = None
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     description: str = ""
 
 
 class ProjectPatch(BaseModel):
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
     name: str | None = Field(default=None, min_length=1, max_length=100)
-    color: str | None = None
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     description: str | None = None
     archived: bool | None = None
 
@@ -43,6 +53,11 @@ class ProjectOut(BaseModel):
 
 
 class TaskIn(BaseModel):
+    @field_validator("title", mode="before")
+    @classmethod
+    def strip_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
     title: str = Field(min_length=1, max_length=200)
     description: str = ""
     project_id: int | None = None
@@ -55,6 +70,11 @@ class TaskIn(BaseModel):
 
 
 class TaskPatch(BaseModel):
+    @field_validator("title", mode="before")
+    @classmethod
+    def strip_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     project_id: int | None = None
@@ -95,7 +115,14 @@ class DraftIn(BaseModel):
 class TaskDraft(BaseModel):
     """Structured output schema returned by the LLM."""
 
-    title: str = Field(description="Short imperative task title, max 200 chars")
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_title(cls, value):
+        return value.strip()[:200] if isinstance(value, str) else value
+
+    title: str = Field(
+        min_length=1, max_length=200, description="Short imperative task title, max 200 chars"
+    )
     description: str = Field(
         default="",
         description="Markdown description; use a '- [ ]' checklist for subtasks when useful",

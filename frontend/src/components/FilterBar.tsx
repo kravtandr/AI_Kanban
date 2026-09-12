@@ -5,10 +5,11 @@ export interface Filters {
   projects: number[];
   priority: Priority | "";
   q: string;
+  tag: string;
 }
 
 export function activeFilterCount(filters: Filters): number {
-  return filters.projects.length + (filters.priority ? 1 : 0) + (filters.q ? 1 : 0);
+  return filters.projects.length + (filters.priority ? 1 : 0) + (filters.q ? 1 : 0) + (filters.tag ? 1 : 0);
 }
 
 interface Props {
@@ -42,6 +43,7 @@ export default function FilterBar({ projects, filters, onChange, onLogout }: Pro
         placeholder="поиск…"
         className="input py-1.5 font-mono text-xs md:w-48"
       />
+      <input className="input py-1.5 text-xs md:w-40" aria-label="Фильтр по тегу" placeholder="тег…" value={filters.tag} onChange={(e) => onChange({ ...filters, tag: e.target.value })} />
       <select
         name="priority"
         aria-label="Фильтр по приоритету"

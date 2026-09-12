@@ -35,6 +35,7 @@ export default function TaskModal({ task, projects, onClose }: Props) {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    queryClient.invalidateQueries({ queryKey: ["task", task.id] });
     queryClient.invalidateQueries({ queryKey: ["projects"] });
   };
 

@@ -1,6 +1,7 @@
 import time
 from collections import defaultdict
 from datetime import timedelta
+from threading import Lock
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -19,6 +20,7 @@ class RateLimited(AuthError):
 
 
 # In-memory login rate limiter: ip -> list of attempt timestamps.
+_attempts_lock = Lock()
 _attempts: dict[str, list[float]] = defaultdict(list)
 
 
@@ -49,10 +51,12 @@ def reset_rate_limiter() -> None:
 
 
 def login(db: Session, username: str, password: str, ip: str) -> tuple[User, str]:
-    check_rate_limit(ip)
+    # Reserve before password verification so concurrent requests cannot bypass the cap.
+    with _attempts_lock:
+        check_rate_limit(ip)
+        record_attempt(ip)
     user = db.scalar(select(User).where(User.username == username))
     if user is None or not verify_password(password, user.password_hash):
-        record_attempt(ip)
         raise AuthError("Invalid username or password")
     # Housekeeping (NFR-4): drop this user's expired sessions on each login.
     db.execute(

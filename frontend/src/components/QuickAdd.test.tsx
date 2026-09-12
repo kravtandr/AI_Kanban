@@ -110,3 +110,21 @@ describe("QuickAdd — диктовка", () => {
     expect(notice.className).not.toContain("text-danger");
   });
 });
+
+it("keeps a long note creatable when drafting fails", async () => {
+  const { api } = await import("../api");
+  sessionStorage.clear();
+  const draft = vi.spyOn(api, "draft").mockRejectedValue(new Error("offline"));
+  mockDictation.state = "idle";
+  renderWithQuery(<QuickAdd projects={PROJECTS} />);
+  const text = "x".repeat(250);
+  const input = screen.getByLabelText("Быстрое добавление задачи");
+  const { fireEvent } = await import("@testing-library/react");
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.submit(input.closest("form")!);
+  await userEvent.click(await screen.findByRole("button", { name: "Редактировать черновик" }));
+  expect(screen.getByDisplayValue("x".repeat(200))).toBeInTheDocument();
+  expect(screen.getByDisplayValue(text)).toBeInTheDocument();
+  draft.mockRestore();
+  sessionStorage.clear();
+});

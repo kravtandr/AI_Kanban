@@ -29,4 +29,4 @@ def hash_token(token: str) -> str:
 
 
 def tokens_equal(a: str, b: str) -> bool:
-    return secrets.compare_digest(a, b)
+    return secrets.compare_digest(a.encode(), b.encode())

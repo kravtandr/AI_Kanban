@@ -106,3 +106,38 @@ def test_expired_session_rejected(auth_client):
             session.expires_at = utcnow() - timedelta(seconds=1)
         db.commit()
     assert auth_client.get("/api/v1/auth/me").status_code == 401
+
+
+def test_csrf_rejects_different_port_and_scheme(auth_client):
+    for origin in ("http://testserver:9999", "https://testserver", "null", "http://["):
+        response = auth_client.post(
+            "/api/v1/tasks", json={"title": "blocked"}, headers={"Origin": origin}
+        )
+        assert response.status_code == 403
+
+
+def test_csrf_allows_ipv6_same_origin(auth_client):
+    response = auth_client.post(
+        "/api/v1/tasks",
+        json={"title": "ipv6"},
+        headers={"Host": "[::1]:8000", "Origin": "http://[::1]:8000"},
+    )
+    # The session cookie belongs to testserver, but origin validation must pass.
+    assert response.status_code != 403
+
+
+def test_audio_request_is_bounded_before_multipart_parsing(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "whisper_max_audio_mb", 0.001)
+    response = client.post(
+        "/api/v1/ai/transcribe",
+        content=b"x" * 100000,
+        headers={"Content-Type": "multipart/form-data; boundary=test"},
+    )
+    assert response.status_code == 413
+
+
+def test_non_ascii_mcp_token_is_rejected_without_crashing(client, monkeypatch):
+    from app.main import McpTokenAuth
+
+    monkeypatch.setattr(get_settings(), "mcp_token", "valid-token")
+    assert not McpTokenAuth._token_valid("неверный-токен")

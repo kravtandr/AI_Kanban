@@ -48,7 +48,7 @@ def transcribe(audio: bytes, filename: str, content_type: str) -> str:
         payload = response.json()
     except httpx.HTTPError as exc:
         # Includes transport failures, timeouts and non-2xx via raise_for_status.
-        log.warning("STT request failed: %s", exc)
+        log.warning("STT request failed (%s)", type(exc).__name__)
         raise SttError("speech recognition service is unavailable") from exc
     except ValueError as exc:  # body was not JSON
         log.warning("STT returned a non-JSON body")
@@ -59,7 +59,6 @@ def transcribe(audio: bytes, filename: str, content_type: str) -> str:
         # Log only the shape, never the content: the payload may carry
         # recognised speech, and this is the one place in the flow that
         # otherwise never persists it.
-        keys = list(payload.keys()) if isinstance(payload, dict) else None
-        log.warning("STT reply has no text field: type=%s keys=%r", type(payload).__name__, keys)
+        log.warning("STT reply has no text field: type=%s", type(payload).__name__)
         raise SttError("speech recognition service returned no text")
     return text.strip()

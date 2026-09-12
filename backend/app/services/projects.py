@@ -60,8 +60,9 @@ def list_projects(db: Session, include_archived: bool = False) -> list[tuple[Pro
     return [(p, counts.get(p.id, 0)) for p in projects]
 
 
-def _next_project_color(db: Session, preferred: str | None = None, *,
-                         exclude_project_id: int | None = None) -> str:
+def _next_project_color(
+    db: Session, preferred: str | None = None, *, exclude_project_id: int | None = None
+) -> str:
     """Return a distinct project color while the shared palette has capacity."""
     q = select(Project.color)
     if exclude_project_id is not None:
@@ -85,9 +86,9 @@ def ensure_unique_project_colors(db: Session) -> None:
     user-selected colors.
     """
     has_legacy_gray = db.scalar(
-        select(Project).where(
-            Project.is_inbox.is_(False), Project.color == DEFAULT_PROJECT_COLOR
-        ).limit(1)
+        select(Project)
+        .where(Project.is_inbox.is_(False), Project.color == DEFAULT_PROJECT_COLOR)
+        .limit(1)
     )
     has_duplicate = db.scalar(
         select(Project.color)
@@ -119,6 +120,9 @@ def ensure_unique_project_colors(db: Session) -> None:
 def create_project(
     db: Session, name: str, color: str | None = None, description: str = ""
 ) -> Project:
+    name = name.strip()
+    if not name or len(name) > 100:
+        raise ProjectError("Project name must contain 1-100 characters")
     if db.scalar(select(Project).where(func.lower(Project.name) == name.lower())):
         raise ProjectError(f"Project '{name}' already exists")
     project = Project(name=name, color=_next_project_color(db, color), description=description)
@@ -142,8 +146,15 @@ def update_project(
         raise ProjectError("Project not found")
     if project.is_inbox and archived:
         raise ProjectError("Inbox project cannot be archived")
-    if name is not None and name != project.name:
-        if db.scalar(select(Project).where(func.lower(Project.name) == name.lower())):
+    if name is not None:
+        name = name.strip()
+        if not name or len(name) > 100:
+            raise ProjectError("Project name must contain 1-100 characters")
+        if db.scalar(
+            select(Project).where(
+                func.lower(Project.name) == name.lower(), Project.id != project_id
+            )
+        ):
             raise ProjectError(f"Project '{name}' already exists")
         project.name = name
     if color is not None:

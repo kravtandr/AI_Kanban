@@ -373,3 +373,15 @@ describe("appendTranscript", () => {
     expect(appendTranscript("Начало.   ", "Продолжение.")).toBe("Начало. Продолжение.");
   });
 });
+
+it("does not deliver a transcript after its editor is closed", async () => {
+  let finish!: (value: { text: string }) => void;
+  vi.spyOn(api, "transcribe").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  const onText = vi.fn();
+  const view = render(<Harness onText={onText} />);
+  await userEvent.click(screen.getByRole("button"));
+  await act(async () => FakeMediaRecorder.instances[0].stop());
+  view.unmount();
+  await act(async () => finish({ text: "stale text" }));
+  expect(onText).not.toHaveBeenCalled();
+});

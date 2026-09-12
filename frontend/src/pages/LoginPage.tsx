@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 
+export function safeNextPath(next: string | null): string {
+  return next && next.startsWith("/") && !next.startsWith("//") && !/[\\\x00-\x1f]/.test(next) ? next : "/board";
+}
+
 export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -25,7 +29,7 @@ export default function LoginPage() {
       await api.login(username, password);
       // Только внутренние пути: "//host" и абсолютные URL — открытый редирект
       const next = params.get("next");
-      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : "/board";
+      const safeNext = safeNextPath(next);
       navigate(safeNext, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось войти");

@@ -99,7 +99,7 @@ class CsrfOriginCheck:
     """NFR-3: cross-origin write protection for the cookie-authenticated API.
 
     For unsafe methods on /api/*: when an Origin header is present, its host
-    must match the request Host, otherwise 403. A missing Origin is allowed
+    must match the request scheme, host and port, otherwise 403. A missing Origin is allowed
     (curl, Bearer-token API clients). /mcp is Bearer-only and is not checked.
     """
 
@@ -115,9 +115,24 @@ class CsrfOriginCheck:
             headers = Headers(scope=scope)
             origin = headers.get("origin")
             if origin:
-                origin_host = (urlsplit(origin).hostname or "").lower()
-                request_host = (headers.get("host") or "").split(":")[0].lower()
-                if origin_host != request_host:
+
+                def origin_key(value: str) -> tuple[str, str, int] | None:
+                    try:
+                        parsed = urlsplit(value)
+                        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                            return None
+                        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+                            return None
+                        if parsed.path not in ("", "/"):
+                            return None
+                        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                        return parsed.scheme, parsed.hostname.lower(), port
+                    except ValueError:
+                        return None
+
+                expected = origin_key(f"{scope['scheme']}://{headers.get('host', '')}")
+                supplied = origin_key(origin)
+                if supplied is None or supplied != expected:
                     response = JSONResponse(
                         {"error": {"code": "csrf", "message": "Cross-origin request rejected"}},
                         status_code=403,
@@ -125,6 +140,44 @@ class CsrfOriginCheck:
                     await response(scope, receive, send)
                     return
         await self.app(scope, receive, send)
+
+
+class AudioBodyLimit:
+    """Bound uploads before multipart parsing can spool untrusted data to disk."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("path", "").rstrip("/") != "/api/v1/ai/transcribe":
+            await self.app(scope, receive, send)
+            return
+        # Allow multipart headers in addition to the configured audio payload.
+        limit = int(get_settings().whisper_max_audio_mb * 1024 * 1024) + 65536
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body.extend(message.get("body", b""))
+            if len(body) > limit:
+                await JSONResponse(
+                    {"error": {"code": "audio_too_large", "message": "Запись слишком длинная"}},
+                    status_code=413,
+                )(scope, receive, send)
+                return
+            if not message.get("more_body", False):
+                break
+        delivered = False
+
+        async def buffered_receive() -> Message:
+            nonlocal delivered
+            if delivered:
+                return await receive()
+            delivered = True
+            return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+        await self.app(scope, buffered_receive, send)
 
 
 class McpTokenAuth:
@@ -138,7 +191,7 @@ class McpTokenAuth:
             await self.app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
-        auth_header = headers.get(b"authorization", b"").decode()
+        auth_header = headers.get(b"authorization", b"").decode("latin-1")
         token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
         # The DB lookup is synchronous; keep it off the event loop.
         if not token or not await anyio.to_thread.run_sync(self._token_valid, token):
@@ -207,6 +260,7 @@ def create_app() -> FastAPI:
     mcp.settings.streamable_http_path = "/"
     app.mount("/mcp", McpTokenAuth(mcp.streamable_http_app()))
     app.add_middleware(McpPathNormalizer)
+    app.add_middleware(AudioBodyLimit)
     app.add_middleware(CsrfOriginCheck)
     app.add_middleware(SecurityHeaders)
 

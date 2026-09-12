@@ -2,7 +2,7 @@ import type { DraftResponse, Project, Task, User } from "./types";
 
 const BASE = "/api/v1";
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
     super(message);
@@ -45,16 +45,21 @@ export const api = {
   me: () => request<User>("/auth/me"),
 
   projects: () => request<Project[]>("/projects"),
-  createProject: (body: { name: string; color?: string }) =>
+  allProjects: () => request<Project[]>("/projects?include_archived=true"),
+  patchProject: (id: number, body: { name?: string; color?: string; description?: string; archived?: boolean }) =>
+    request<Project>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteProject: (id: number) => request<void>(`/projects/${id}?force=true`, { method: "DELETE" }),
+  createProject: (body: { name: string; color?: string; description?: string }) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(body) }),
 
+  task: (id: number) => request<Task>(`/tasks/${id}`),
   tasks: (params: URLSearchParams) => request<Task[]>(`/tasks?${params.toString()}`),
   createTask: (body: Partial<Task> & { title: string; ai_meta?: unknown }) =>
     request<Task>("/tasks", { method: "POST", body: JSON.stringify(body) }),
   patchTask: (id: number, body: Partial<Task> & { clear_due_date?: boolean }) =>
     request<Task>(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-  moveTask: (id: number, status: string) =>
-    request<Task>(`/tasks/${id}/move`, { method: "POST", body: JSON.stringify({ status }) }),
+  moveTask: (id: number, status: string, sort_order?: number) =>
+    request<Task>(`/tasks/${id}/move`, { method: "POST", body: JSON.stringify({ status, sort_order }) }),
   deleteTask: (id: number) => request<void>(`/tasks/${id}`, { method: "DELETE" }),
 
   draft: (text: string) =>

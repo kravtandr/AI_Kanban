@@ -1,5 +1,7 @@
 import {
   DndContext,
+  pointerWithin,
+  rectIntersection,
   DragOverlay,
   MeasuringStrategy,
   PointerSensor,
@@ -12,24 +14,26 @@ import {
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import Column from "../components/Column";
 import FilterBar, { activeFilterCount, type Filters } from "../components/FilterBar";
 import NewProjectModal from "../components/NewProjectModal";
 import NewTaskModal from "../components/NewTaskModal";
+import ProjectManager from "../components/ProjectManager";
 import QuickAdd from "../components/QuickAdd";
 import { TaskCardView } from "../components/TaskCard";
 import TaskContextMenu from "../components/TaskContextMenu";
 import TaskModal from "../components/TaskModal";
 import { findProjectByName } from "../lib/projectMenu";
-import type { Priority, Status, Task } from "../types";
-import { STATUSES } from "../types";
+import type { Status, Task } from "../types";
+import { PRIORITIES, STATUSES } from "../types";
 
 function filtersFromParams(params: URLSearchParams): Filters {
   return {
-    projects: params.getAll("project").map(Number).filter(Boolean),
-    priority: (params.get("priority") ?? "") as Priority | "",
+    projects: params.getAll("project").map(Number).filter((id) => Number.isSafeInteger(id) && id > 0),
+    priority: PRIORITIES.find((p) => p.id === params.get("priority"))?.id ?? "",
     q: params.get("q") ?? "",
+    tag: params.get("tag") ?? "",
   };
 }
 
@@ -57,6 +61,7 @@ export default function BoardPage() {
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
   const [createStatus, setCreateStatus] = useState<Status | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [showProjects, setShowProjects] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   // Контекстное меню и создание проекта — транзиентный UI, в URL не живут.
   const [menuFor, setMenuFor] = useState<{ task: Task; at: { x: number; y: number } } | null>(null);
@@ -97,9 +102,12 @@ export default function BoardPage() {
     return () => clearTimeout(timer);
   }, [filters.q]);
 
+  const allDone = searchParams.get("all_done") === "true";
   const taskParams = new URLSearchParams();
   filters.projects.forEach((id) => taskParams.append("project_id", String(id)));
+  if (allDone) taskParams.set("all_done", "true");
   if (filters.priority) taskParams.set("priority", filters.priority);
+  if (filters.tag) taskParams.set("tag", filters.tag);
   if (debouncedQ) taskParams.set("q", debouncedQ);
 
   const tasksQuery = useQuery({
@@ -111,30 +119,32 @@ export default function BoardPage() {
 
   const moveMutation = useMutation({
     mutationKey: MOVE_MUTATION_KEY,
-    mutationFn: ({ id, status }: { id: number; status: Status }) => api.moveTask(id, status),
-    onMutate: async ({ id, status }) => {
+    mutationFn: ({ id, status, sortOrder }: { id: number; status: Status; sortOrder?: number }) => api.moveTask(id, status, sortOrder),
+    onMutate: async ({ id, status, sortOrder }) => {
       // Optimistic update with rollback on error (FR-4.2).
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       // Запоминаем только прежний статус этой задачи: откат всего снапшота
       // затирал бы оптимистичные изменения других мутаций в полёте
       let prevStatus: Status | undefined;
+      let prevOrder: number | undefined;
       for (const [, data] of queryClient.getQueriesData<Task[]>({ queryKey: ["tasks"] })) {
         const found = data?.find((t) => t.id === id);
         if (found) {
           prevStatus = found.status;
+          prevOrder = found.sort_order;
           break;
         }
       }
       queryClient.setQueriesData<Task[]>({ queryKey: ["tasks"] }, (old) =>
-        old?.map((t) => (t.id === id ? { ...t, status } : t)),
+        old?.map((t) => (t.id === id ? { ...t, status, sort_order: sortOrder ?? t.sort_order } : t)),
       );
-      return { id, prevStatus };
+      return { id, prevStatus, prevOrder };
     },
     onError: (_err, _vars, context) => {
       if (!context || context.prevStatus === undefined) return;
-      const { id, prevStatus } = context;
+      const { id, prevStatus, prevOrder } = context;
       queryClient.setQueriesData<Task[]>({ queryKey: ["tasks"] }, (old) =>
-        old?.map((t) => (t.id === id ? { ...t, status: prevStatus } : t)),
+        old?.map((t) => (t.id === id ? { ...t, status: prevStatus, sort_order: prevOrder ?? t.sort_order } : t)),
       );
     },
     onSettled: () => {
@@ -142,6 +152,8 @@ export default function BoardPage() {
       // среди быстрых перетаскиваний вернёт устаревшее состояние
       if (queryClient.isMutating({ mutationKey: MOVE_MUTATION_KEY }) === 1) {
         queryClient.invalidateQueries({ queryKey: ["tasks"] });
+        queryClient.invalidateQueries({ queryKey: ["task"] });
+        queryClient.invalidateQueries({ queryKey: ["projects"] });
       }
     },
   });
@@ -162,20 +174,19 @@ export default function BoardPage() {
    * этот проект. Если после перезапроса имени в списке нет — проект в
    * архиве, и вот об этом сказать надо. */
   const createProjectAndMove = async (task: Task, name: string) => {
+    let projectId: number;
     try {
-      const created = await api.createProject({ name });
-      await setProjectMutation.mutateAsync({ id: task.id, projectId: created.id });
-    } catch {
-      const fresh = await queryClient.fetchQuery({
-        queryKey: ["projects"],
-        queryFn: api.projects,
-      });
+      projectId = (await api.createProject({ name })).id;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 409) throw error;
+      const fresh = await queryClient.fetchQuery({ queryKey: ["projects"], queryFn: api.projects });
       const existing = findProjectByName(fresh, name);
       if (!existing) {
         throw new Error(`Проект «${name}» есть в архиве — переименуйте или разархивируйте его`);
       }
-      await setProjectMutation.mutateAsync({ id: task.id, projectId: existing.id });
+      projectId = existing.id;
     }
+    await setProjectMutation.mutateAsync({ id: task.id, projectId });
     setCreatingProjectFor(null);
   };
 
@@ -187,6 +198,8 @@ export default function BoardPage() {
       next.projects.forEach((id) => params.append("project", String(id)));
       params.delete("priority");
       if (next.priority) params.set("priority", next.priority);
+      params.delete("tag");
+      if (next.tag) params.set("tag", next.tag);
       params.delete("q");
       if (next.q) params.set("q", next.q);
     });
@@ -214,14 +227,16 @@ export default function BoardPage() {
     releaseCardClick();
     const task = event.active.data.current?.task as Task | undefined;
     const overId = event.over?.id;
-    if (
-      !task ||
-      typeof overId !== "string" ||
-      !(overId.startsWith("column-") || overId.startsWith("mobiledrop-"))
-    )
-      return;
-    const status = overId.replace(/^(column-|mobiledrop-)/, "") as Status;
-    if (status !== task.status) moveMutation.mutate({ id: task.id, status });
+    if (!task || typeof overId !== "string") return;
+    const target = event.over?.data.current?.task as Task | undefined;
+    let status: Status;
+    if (target && target.id !== task.id) {
+      status = target.status;
+      moveMutation.mutate({ id: task.id, status, sortOrder: target.sort_order });
+    } else if (overId.startsWith("column-") || overId.startsWith("mobiledrop-")) {
+      status = overId.replace(/^(column-|mobiledrop-)/, "") as Status;
+      if (status !== task.status) moveMutation.mutate({ id: task.id, status });
+    } else return;
     // Сброс на мобильный таб — переключаемся на него, чтобы было видно,
     // куда приземлилась карточка
     if (overId.startsWith("mobiledrop-")) setMobileStatus(status);
@@ -241,27 +256,13 @@ export default function BoardPage() {
   const projectMap = new Map(projects.map((p) => [p.id, p]));
   const tasks = tasksQuery.data ?? [];
   const openTaskId = Number(searchParams.get("task")) || null;
-  const openTask = openTaskId ? (tasks.find((t) => t.id === openTaskId) ?? null) : null;
-
-  // В API нет GET /tasks/:id, поэтому задача берётся из уже загруженной
-  // выборки. Если её там нет (удалена или не проходит фильтр) — снимаем
-  // параметр, чтобы ссылка не указывала в пустоту.
-  const tasksUpdatedAt = tasksQuery.dataUpdatedAt;
-  useEffect(() => {
-    if (!openTaskId || tasksQuery.isPending) return;
-    if (tasksQuery.data?.some((t) => t.id === openTaskId)) return;
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("task");
-        return next;
-      },
-      { replace: true },
-    );
-    // tasksUpdatedAt — стабильный признак «пришли свежие данные»,
-    // в отличие от самого массива, новой ссылки на каждый рендер
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openTaskId, tasksQuery.isPending, tasksUpdatedAt, setSearchParams]);
+  const openTaskQuery = useQuery({
+    queryKey: ["task", openTaskId],
+    queryFn: () => api.task(openTaskId!),
+    enabled: openTaskId !== null,
+    retry: false,
+  });
+  const openTask = openTaskQuery.data;
   const countByStatus = new Map<Status, number>(
     STATUSES.map((s) => [s.id, tasks.filter((t) => t.status === s.id).length]),
   );
@@ -314,6 +315,7 @@ export default function BoardPage() {
               </span>
             )}
           </button>
+          <button className="btn-ghost" onClick={() => setShowProjects(true)}>Проекты</button>
           <button
             onClick={logout}
             className="hidden shrink-0 font-mono text-xs text-dim transition hover:text-ink md:block"
@@ -333,6 +335,19 @@ export default function BoardPage() {
         )}
       </header>
 
+      <DndContext
+        sensors={sensors}
+        collisionDetection={(args) => {
+          const hits = pointerWithin(args);
+          if (!hits.length) return rectIntersection(args);
+          const cards = hits.filter((hit) => String(hit.id).startsWith("task-"));
+          return cards.length ? cards : hits;
+        }}
+        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={onDragCancel}
+      >
       <main id="board-main" tabIndex={-1} className="flex flex-1 flex-col overflow-hidden p-3 md:p-4">
         {/* Живые области смонтированы всегда: содержимое, появляющееся вместе
           с самим aria-live элементом, скринридером не зачитывается. */}
@@ -369,6 +384,13 @@ export default function BoardPage() {
             </div>
           )}
         </div>
+
+        <button
+          className="btn-ghost mb-2 shrink-0 self-end"
+          onClick={() => updateParams((p) => allDone ? p.delete("all_done") : p.set("all_done", "true"))}
+        >
+          {allDone ? "Только недавние завершённые" : "Показать все завершённые"}
+        </button>
 
         {/* Мобильный переключатель колонок: одна колонка на экран.
           Во время перетаскивания табы уступают место drop-зонам статусов. */}
@@ -417,22 +439,14 @@ export default function BoardPage() {
           )}
         </div>
         {!tasksQuery.isError && (
-          <DndContext
-            sensors={sensors}
-            // Drop-зоны мобильных табов монтируются уже во время drag —
-            // их прямоугольники надо измерять постоянно, а не раз на старте
-            measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-            onDragStart={onDragStart}
-            onDragEnd={onDragEnd}
-            onDragCancel={onDragCancel}
-          >
+          <>
             <div className="flex min-h-0 flex-1 gap-3 md:gap-4">
               {STATUSES.map((column) => (
                 <Column
                   key={column.id}
                   id={column.id}
                   title={column.title}
-                  tasks={tasks.filter((t) => t.status === column.id)}
+                  tasks={tasks.filter((t) => t.status === column.id).sort((a, b) => a.sort_order - b.sort_order)}
                   projects={projectMap}
                   onOpen={openTaskById}
                   onContextMenu={(task, at) => setMenuFor({ task, at })}
@@ -451,10 +465,14 @@ export default function BoardPage() {
                 />
               )}
             </DragOverlay>
-          </DndContext>
+          </>
         )}
+        {moveMutation.isError && <p role="alert" className="text-danger">Не удалось переместить задачу — попробуйте ещё раз</p>}
+        {openTaskQuery.isError && <p role="alert" className="text-danger">Не удалось открыть задачу: {openTaskQuery.error.message}</p>}
       </main>
+      </DndContext>
 
+      {showProjects && <ProjectManager onClose={() => setShowProjects(false)} />}
       {openTask && (
         // key по id: при переходе с ?task=1 на ?task=2 модалка должна
         // пересобраться, иначе останется снапшот формы прежней задачи

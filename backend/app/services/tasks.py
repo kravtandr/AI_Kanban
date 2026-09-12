@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -26,7 +26,7 @@ def list_tasks(
     tag: str | None = None,
     query: str | None = None,
     all_done: bool = False,
-    limit: int = 500,
+    limit: int | None = None,
 ) -> list[Task]:
     # No SQL LIMIT here: the tag/done-window filters below run in Python, so
     # limiting early would drop matching rows. Single-user scale, acceptable.
@@ -42,12 +42,16 @@ def list_tasks(
         q = q.where(Task.status == status)
     if priority is not None:
         q = q.where(Task.priority == priority)
-    if query:
-        pattern = f"%{query.lower()}%"
-        q = q.where(
-            or_(func.lower(Task.title).like(pattern), func.lower(Task.description).like(pattern))
-        )
     tasks = list(db.scalars(q))
+    if query and (needle := query.strip().casefold()):
+        tasks = [
+            task
+            for task in tasks
+            if any(
+                needle in value.casefold()
+                for value in (task.title, task.description, *(task.tags or []))
+            )
+        ]
     if tag:
         tasks = [t for t in tasks if tag in (t.tags or [])]
     if not all_done:
@@ -57,6 +61,8 @@ def list_tasks(
             for t in tasks
             if t.status != TaskStatus.done or (t.completed_at and t.completed_at >= cutoff)
         ]
+    if limit is not None and limit < 1:
+        raise TaskError("Limit must be positive")
     return tasks[:limit]
 
 
@@ -74,6 +80,22 @@ def _next_sort_order(db: Session, status: TaskStatus) -> int:
     return (current or 0) + 1
 
 
+def _normalize_title(title: str) -> str:
+    title = title.strip()[:200]
+    if not title:
+        raise TaskError("Title must not be blank")
+    return title
+
+
+def _require_active_project(db: Session, project_id: int) -> Project:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise TaskError("Project not found")
+    if project.archived_at is not None:
+        raise TaskError("Project is archived")
+    return project
+
+
 def create_task(
     db: Session,
     *,
@@ -89,10 +111,10 @@ def create_task(
 ) -> Task:
     if project_id is None:
         project_id = get_inbox(db).id
-    elif db.get(Project, project_id) is None:
-        raise TaskError("Project not found")
+    else:
+        _require_active_project(db, project_id)
     task = Task(
-        title=title[:200],
+        title=_normalize_title(title),
         description=description,
         project_id=project_id,
         status=status,
@@ -114,14 +136,13 @@ def create_task(
 def update_task(db: Session, task_id: int, **fields) -> Task:
     task = get_task(db, task_id)
     if "project_id" in fields and fields["project_id"] is not None:
-        if db.get(Project, fields["project_id"]) is None:
-            raise TaskError("Project not found")
+        _require_active_project(db, fields["project_id"])
         task.project_id = fields["project_id"]
     for name in ("title", "description", "priority", "tags", "due_date"):
         if name in fields and fields[name] is not None:
             value = fields[name]
             if name == "title":  # same normalisation as create_task; DB column is String(200)
-                value = value.strip()[:200] or task.title
+                value = _normalize_title(value)
             setattr(task, name, value)
     if fields.get("clear_due_date"):
         task.due_date = None
@@ -135,12 +156,36 @@ def update_task(db: Session, task_id: int, **fields) -> Task:
 def _apply_status(
     db: Session, task: Task, status: TaskStatus, sort_order: int | None = None
 ) -> None:
-    if status != task.status:
+    changed_status = status != task.status
+    if sort_order is not None:
+        # Lock in immutable id order across columns: two opposite-direction
+        # moves must not each lock the other's destination and then deadlock.
+        board = list(
+            db.scalars(
+                select(Task)
+                .where(Task.deleted_at.is_(None))
+                .order_by(Task.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        changed_status = status != task.status
+        column = sorted(
+            (other for other in board if other.status == status and other.id != task.id),
+            key=lambda other: (
+                other.sort_order,
+                -other.created_at.replace(tzinfo=UTC).timestamp(),
+                other.id,
+            ),
+        )
+        column.insert(max(0, min(sort_order - 1, len(column))), task)
+        for position, other in enumerate(column, start=1):
+            other.sort_order = position
+    elif changed_status:
+        task.sort_order = _next_sort_order(db, status)
+    if changed_status:
         task.status = status
         task.completed_at = utcnow() if status == TaskStatus.done else None
-        task.sort_order = sort_order if sort_order is not None else _next_sort_order(db, status)
-    elif sort_order is not None:
-        task.sort_order = sort_order
 
 
 def move_task(db: Session, task_id: int, status: TaskStatus, sort_order: int | None = None) -> Task:
