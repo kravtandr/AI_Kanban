@@ -34,6 +34,38 @@ docker compose logs app | tail -20           # "Created initial admin user" пр
 
 Открыть `http://<server>/` с любого устройства в LAN → страница входа → доска.
 
+## HTTP через системный nginx (:27182)
+
+На домашнем сервере цепочка запросов: nginx `:27182` → Caddy
+`127.0.0.1:8081` → app. Проверенный шаблон — `deploy/nginx-tasktracker.conf`.
+Заголовок `Host` должен сохранять внешний порт: `proxy_set_header Host $http_host;`.
+Значение `$host` убирает порт, из-за чего браузерный `Origin` не совпадает с
+адресом запроса и любые изменения, включая перенос карточек, получают CSRF 403.
+Проверку порта в приложении отключать нельзя.
+
+После `make verify` и явного запроса владельца применить изменение на сервере:
+
+```bash
+sudo cp -a /etc/nginx/sites-available/tasktracker /etc/nginx/tasktracker.before-origin-fix
+sudo install -m 644 deploy/nginx-tasktracker.conf /etc/nginx/sites-available/tasktracker
+sudo nginx -t && sudo systemctl reload nginx
+sh deploy/check-origin.sh http://127.0.0.1:27182
+curl -fsS http://127.0.0.1:27182/healthz
+```
+
+При отличиях host-конфигурации от шаблона перенести только исправление `Host`,
+сохранив остальные локальные настройки. `check-origin.sh` отправляет запросы
+без авторизации: ожидает 401 для своего Origin и 403 для чужого. Данные задач
+не меняются. Дополнительно проверить перенос карточки в браузере с активной сессией.
+Проверку нужно запускать через внешний nginx, а не только через Caddy `:8081`.
+
+При неудаче проверки или reload восстановить сохранённый конфиг:
+
+```bash
+sudo cp -a /etc/nginx/tasktracker.before-origin-fix /etc/nginx/sites-available/tasktracker
+sudo nginx -t && sudo systemctl reload nginx
+```
+
 ## HTTPS в LAN (обязателен для диктовки)
 
 Голосовой ввод требует secure context: на странице, открытой по HTTP, браузер не даёт
