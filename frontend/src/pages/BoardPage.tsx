@@ -15,6 +15,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
+import AgentPromptModal from "../components/AgentPromptModal";
 import Column from "../components/Column";
 import FilterBar, { activeFilterCount, type Filters } from "../components/FilterBar";
 import NavTabs from "../components/NavTabs";
@@ -68,6 +69,12 @@ export default function BoardPage() {
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
   const [createStatus, setCreateStatus] = useState<Status | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [promptTask, setPromptTask] = useState<Task | null>(null);
+  const promptMutation = useMutation({ mutationFn: api.agentPrompt, retry: false });
+  const openPrompt = (task: Task) => {
+    setPromptTask(task);
+    promptMutation.mutate(task.id);
+  };
   const [showProjects, setShowProjects] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showStats, setShowStats] = useState(false);
@@ -495,6 +502,7 @@ export default function BoardPage() {
                   running={runningByTask}
                   sinceFetchSeconds={sinceFetchSeconds}
                   onOpen={openTaskById}
+                  onPrompt={openPrompt}
                   onContextMenu={(task, at) => setMenuFor({ task, at })}
                   onAdd={setCreateStatus}
                   activeOnMobile={column.id === mobileStatus}
@@ -510,6 +518,7 @@ export default function BoardPage() {
                   running={runningByTask.get(activeTask.id) ?? null}
                   sinceFetchSeconds={sinceFetchSeconds}
                   overlay
+                  hasPromptAction
                 />
               )}
             </DragOverlay>
@@ -521,6 +530,23 @@ export default function BoardPage() {
       </DndContext>
 
       {showProjects && <ProjectManager onClose={() => setShowProjects(false)} />}
+      {promptTask && (
+        <AgentPromptModal
+          key={promptTask.id}
+          taskTitle={promptTask.title}
+          prompt={promptMutation.data?.prompt ?? null}
+          pending={promptMutation.isPending}
+          error={promptMutation.isError
+            ? "Не удалось сгенерировать промпт — проверьте соединение и попробуйте ещё раз."
+            : promptMutation.data && !promptMutation.data.ai_ok
+              ? promptMutation.data.ai_error === "LLM is not configured"
+                ? "AI недоступен: модель не настроена."
+                : "AI недоступен — попробуйте ещё раз."
+              : null}
+          onRetry={() => promptMutation.mutate(promptTask.id)}
+          onClose={() => setPromptTask(null)}
+        />
+      )}
       {openTask && (
         // key по id: при переходе с ?task=1 на ?task=2 модалка должна
         // пересобраться, иначе останется снапшот формы прежней задачи

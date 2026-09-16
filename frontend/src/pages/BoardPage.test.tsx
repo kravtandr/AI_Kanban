@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -80,6 +81,100 @@ function renderBoard() {
   );
   return client;
 }
+
+describe("Промпт для кодового агента", () => {
+  function setup(tasks = [TASK]) {
+    vi.spyOn(api, "projects").mockResolvedValue([PROJECT]);
+    vi.spyOn(api, "tasks").mockResolvedValue(tasks);
+    vi.spyOn(api, "analytics").mockResolvedValue(EMPTY_ANALYTICS);
+    renderBoard();
+  }
+
+  it("кнопка карточки генерирует промпт, не открывает задачу, позволяет копировать", async () => {
+    const user = userEvent.setup();
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      prompt: "Изучи репозиторий и реализуй UI.", ai_ok: true, ai_error: null,
+    })));
+    const taskRead = vi.spyOn(api, "task");
+    setup();
+    await user.click(await screen.findByRole("button", { name: "Промпт для задачи «Сделать UI»" }));
+    expect(await screen.findByRole("dialog", { name: "Промпт для агента" })).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("Изучи репозиторий и реализуй UI.")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith("/api/v1/ai/agent-prompt/7", expect.objectContaining({ method: "POST" }));
+    expect(taskRead).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Копировать" }));
+    expect(await navigator.clipboard.readText()).toBe("Изучи репозиторий и реализуй UI.");
+    expect(within(screen.getByRole("dialog")).getByRole("status")).toHaveTextContent("Скопировано");
+    await user.click(screen.getByRole("button", { name: "Закрыть" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("ошибка AI позволяет повторить запрос; ожидание не запускает дубликаты", async () => {
+    let finish!: (value: Response) => void;
+    const fetch = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ prompt: null, ai_ok: false, ai_error: "LLM service unavailable" })))
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    setup();
+    fireEvent.click(await screen.findByRole("button", { name: "Промпт для задачи «Сделать UI»" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("AI недоступен");
+    expect(screen.queryByRole("button", { name: "Копировать" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+    expect(await within(screen.getByRole("dialog")).findByRole("status")).toHaveTextContent("Генерирую");
+    expect(screen.queryByRole("button", { name: "Повторить" })).toBeNull();
+    await act(async () => finish(new Response(JSON.stringify({ prompt: "Готовый промпт", ai_ok: true, ai_error: null }))));
+    expect(await screen.findByDisplayValue("Готовый промпт")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("клавиатура на кнопке промпта не открывает карточку", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ prompt: "Промпт", ai_ok: true, ai_error: null })));
+    const taskRead = vi.spyOn(api, "task");
+    setup();
+    (await screen.findByRole("button", { name: "Промпт для задачи «Сделать UI»" })).focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByDisplayValue("Промпт")).toBeInTheDocument();
+    expect(taskRead).not.toHaveBeenCalled();
+  });
+
+  it("если копирование запрещено, выделяет текст для ручного копирования", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Permission denied"));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ prompt: "Промпт для копирования", ai_ok: true, ai_error: null })));
+    setup();
+    await user.click(await screen.findByRole("button", { name: "Промпт для задачи «Сделать UI»" }));
+    const field = await screen.findByRole("textbox", { name: "Готовый промпт" }) as HTMLTextAreaElement;
+    await user.click(screen.getByRole("button", { name: "Копировать" }));
+    expect(await screen.findByText(/скопируйте его вручную/)).toBeInTheDocument();
+    expect(field).toHaveFocus();
+    expect(field.selectionStart).toBe(0);
+    expect(field.selectionEnd).toBe(field.value.length);
+  });
+
+  it("показывает сетевую ошибку с повтором", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+    setup();
+    fireEvent.click(await screen.findByRole("button", { name: "Промпт для задачи «Сделать UI»" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("проверьте соединение");
+    expect(screen.getByRole("button", { name: "Повторить" })).toBeEnabled();
+  });
+
+  it("поздний ответ закрытой задачи не подменяет промпт другой задачи", async () => {
+    let finishFirst!: (value: Response) => void;
+    vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ prompt: "Промпт второй задачи", ai_ok: true, ai_error: null })));
+    setup([TASK, { ...TASK, id: 8, title: "Вторая задача" }]);
+    fireEvent.click(await screen.findByRole("button", { name: "Промпт для задачи «Сделать UI»" }));
+    await within(await screen.findByRole("dialog")).findByRole("status");
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
+    fireEvent.click(screen.getByRole("button", { name: "Промпт для задачи «Вторая задача»" }));
+    expect(await screen.findByDisplayValue("Промпт второй задачи")).toBeInTheDocument();
+    await act(async () => finishFirst(new Response(JSON.stringify({ prompt: "Старый ответ", ai_ok: true, ai_error: null }))));
+    expect(screen.queryByDisplayValue("Старый ответ")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Промпт второй задачи")).toBeInTheDocument();
+  });
+});
 
 /** The shared PointerEvent polyfill (test-setup.ts) doesn't set `isPrimary`,
  * and dnd-kit's PointerSensor activator bails out immediately on a falsy

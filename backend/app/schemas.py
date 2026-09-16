@@ -130,6 +130,19 @@ class DraftIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class AgentPromptDraft(BaseModel):
+    """Structured LLM reply, rejected when empty or unreasonably long."""
+
+    model_config = {"str_strip_whitespace": True}
+    prompt: str = Field(min_length=1, max_length=20000)
+
+
+class AgentPromptOut(BaseModel):
+    prompt: str | None = None
+    ai_ok: bool
+    ai_error: str | None = None
+
+
 class TaskDraft(BaseModel):
     """Structured output schema returned by the LLM."""
 

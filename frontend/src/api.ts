@@ -76,6 +76,10 @@ export const api = {
     request<DraftResponse>("/ai/draft", { method: "POST", body: JSON.stringify({ text }) }),
   enhance: (taskId: number) =>
     request<DraftResponse>(`/ai/enhance/${taskId}`, { method: "POST" }),
+  agentPrompt: (taskId: number) =>
+    request<{ prompt: string | null; ai_ok: boolean; ai_error: string | null }>(
+      `/ai/agent-prompt/${taskId}`, { method: "POST" },
+    ),
   transcribe: (blob: Blob) => {
     const form = new FormData();
     // Имя файла нужно Whisper для выбора декодера: Safari отдаёт mp4, Chrome — webm.

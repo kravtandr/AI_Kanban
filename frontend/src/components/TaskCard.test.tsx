@@ -47,6 +47,7 @@ function Harness({
       running={null}
       sinceFetchSeconds={0}
       onOpen={onOpen}
+      onPrompt={vi.fn()}
       onContextMenu={onContextMenu}
       clickGuard={guard}
     />
@@ -107,7 +108,7 @@ describe("TaskCard: долгое нажатие пальцем", () => {
 
   it("открывает меню после удержания", () => {
     const { onContextMenu } = setup();
-    const card = screen.getByRole("button");
+    const card = screen.getByRole("button", { name: "Открыть задачу «Сделать UI»" });
 
     fireEvent.pointerDown(card, { pointerType: "touch", clientX: 50, clientY: 60 });
     vi.advanceTimersByTime(600);
@@ -119,7 +120,7 @@ describe("TaskCard: долгое нажатие пальцем", () => {
 
   it("не открывает, если палец сдвинулся — это перетаскивание, не удержание", () => {
     const { onContextMenu } = setup();
-    const card = screen.getByRole("button");
+    const card = screen.getByRole("button", { name: "Открыть задачу «Сделать UI»" });
 
     fireEvent.pointerDown(card, { pointerType: "touch", clientX: 50, clientY: 60 });
     fireEvent.pointerMove(card, { pointerType: "touch", clientX: 50, clientY: 90 });
@@ -130,7 +131,7 @@ describe("TaskCard: долгое нажатие пальцем", () => {
 
   it("не открывает, если палец убрали раньше — это обычный тап", () => {
     const { onContextMenu } = setup();
-    const card = screen.getByRole("button");
+    const card = screen.getByRole("button", { name: "Открыть задачу «Сделать UI»" });
 
     fireEvent.pointerDown(card, { pointerType: "touch", clientX: 50, clientY: 60 });
     vi.advanceTimersByTime(200);
@@ -142,7 +143,7 @@ describe("TaskCard: долгое нажатие пальцем", () => {
 
   it("мышь таймером не обслуживается — у неё есть настоящий contextmenu", () => {
     const { onContextMenu } = setup();
-    const card = screen.getByRole("button");
+    const card = screen.getByRole("button", { name: "Открыть задачу «Сделать UI»" });
 
     fireEvent.pointerDown(card, { pointerType: "mouse", clientX: 50, clientY: 60 });
     vi.advanceTimersByTime(600);
@@ -152,7 +153,7 @@ describe("TaskCard: долгое нажатие пальцем", () => {
 
   it("тап после сработавшего удержания не открывает модалку", () => {
     const { onOpen, onContextMenu } = setup();
-    const card = screen.getByRole("button");
+    const card = screen.getByRole("button", { name: "Открыть задачу «Сделать UI»" });
 
     fireEvent.pointerDown(card, { pointerType: "touch", clientX: 50, clientY: 60 });
     vi.advanceTimersByTime(600);

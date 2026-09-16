@@ -14,6 +14,7 @@ interface Props {
   /** Секунды с момента ответа аналитики; одна на всю доску (§12.1). */
   sinceFetchSeconds: number;
   onOpen: (task: Task) => void;
+  onPrompt: (task: Task) => void;
   onContextMenu: (task: Task, at: { x: number; y: number }) => void;
   onAdd: (status: Status) => void;
   /** На мобильном видна одна колонка — выбранная в табах статусов. */
@@ -32,6 +33,7 @@ export default function Column({
   running,
   sinceFetchSeconds,
   onOpen,
+  onPrompt,
   onContextMenu,
   onAdd,
   activeOnMobile,
@@ -69,6 +71,7 @@ export default function Column({
             running={running.get(task.id) ?? null}
             sinceFetchSeconds={sinceFetchSeconds}
             onOpen={onOpen}
+            onPrompt={onPrompt}
             onContextMenu={onContextMenu}
             clickGuard={clickGuard}
           />

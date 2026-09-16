@@ -8,6 +8,7 @@ interface ViewProps {
   task: Task;
   project: Project | undefined;
   overlay?: boolean;
+  hasPromptAction?: boolean;
   /** Замер текущего захода из GET /analytics; null — задача не в работе
    * либо аналитика недоступна (доска при этом работает полностью). */
   running?: RunningTask | null;
@@ -24,6 +25,7 @@ export function TaskCardView({
   task,
   project,
   overlay = false,
+  hasPromptAction = false,
   running = null,
   sinceFetchSeconds = 0,
 }: ViewProps) {
@@ -50,7 +52,7 @@ export function TaskCardView({
     >
       {/* break-words: заголовок может прийти от агента одной длинной строкой
         без пробелов (URL, идентификатор) и распёр бы карточку. */}
-      <p className="text-[15px] leading-snug font-medium break-words md:text-sm">{task.title}</p>
+      <p className={`text-[15px] leading-snug font-medium break-words md:text-sm ${hasPromptAction ? "min-h-8 pr-16" : ""}`}>{task.title}</p>
       {hasMeta && (
         <p className="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-dim">
           {showProject && (
@@ -106,6 +108,7 @@ interface Props {
   running: RunningTask | null;
   sinceFetchSeconds: number;
   onOpen: (task: Task) => void;
+  onPrompt: (task: Task) => void;
   /** Вызов контекстного меню: правый клик, долгое нажатие или клавиша Menu. */
   onContextMenu: (task: Task, at: { x: number; y: number }) => void;
   /** Пока true — игнорируем click: после drag браузер шлёт «сквозной»
@@ -129,6 +132,7 @@ export default function TaskCard({
   running,
   sinceFetchSeconds,
   onOpen,
+  onPrompt,
   onContextMenu,
   clickGuard,
 }: Props) {
@@ -154,70 +158,86 @@ export default function TaskCard({
   };
 
   return (
-    <div
-      ref={(node) => { setNodeRef(node); setDropRef(node); }}
-      {...listeners}
-      {...attributes}
-      onPointerDown={(e) => {
-        // listeners от dnd-kit содержат свой onPointerDown, и объявленный
-        // ниже проп его перекрывает. Вызываем вручную, иначе перетаскивание
-        // перестанет запускаться.
-        listeners?.onPointerDown?.(e);
-        // Мышь обслуживает настоящий contextmenu — таймер ей не нужен.
-        if (e.pointerType === "mouse") return;
-        cancelLongPress();
-        const { clientX: x, clientY: y } = e;
-        longPress.current = {
-          x,
-          y,
-          timer: window.setTimeout(() => {
-            longPress.current = null;
-            contextMenuAt.current = Date.now();
-            onContextMenu(task, { x, y });
-          }, LONG_PRESS_MS),
-        };
-      }}
-      onPointerMove={(e) => {
-        const pressed = longPress.current;
-        if (!pressed) return;
-        if (Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) > LONG_PRESS_MOVE_TOLERANCE_PX)
+    <div className="relative">
+      <div
+        ref={(node) => { setNodeRef(node); setDropRef(node); }}
+        {...listeners}
+        {...attributes}
+        aria-label={`Открыть задачу «${task.title}»`}
+        onPointerDown={(e) => {
+          // listeners от dnd-kit содержат свой onPointerDown, и объявленный
+          // ниже проп его перекрывает. Вызываем вручную, иначе перетаскивание
+          // перестанет запускаться.
+          listeners?.onPointerDown?.(e);
+          // Мышь обслуживает настоящий contextmenu — таймер ей не нужен.
+          if (e.pointerType === "mouse") return;
           cancelLongPress();
-      }}
-      onPointerUp={cancelLongPress}
-      onPointerCancel={cancelLongPress}
-      onClick={() => {
-        if (clickGuard.current) return;
-        if (Date.now() - contextMenuAt.current < CONTEXT_MENU_CLICK_GRACE_MS) return;
-        onOpen(task);
-      }}
-      onContextMenu={(e) => {
-        // Правый клик, клавиши Menu / Shift+F10 (клавиатурная доступность
-        // достаётся бесплатно) и долгое нажатие в Chromium на Android.
-        // iOS Safari сюда не приходит — его обслуживает таймер выше.
-        e.preventDefault();
-        cancelLongPress();
-        contextMenuAt.current = Date.now();
-        onContextMenu(task, { x: e.clientX, y: e.clientY });
-      }}
-      onKeyDown={(e) => {
-        // dnd-kit даёт карточке role=button и tabIndex, но Enter сам не обработает
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
+          const { clientX: x, clientY: y } = e;
+          longPress.current = {
+            x,
+            y,
+            timer: window.setTimeout(() => {
+              longPress.current = null;
+              contextMenuAt.current = Date.now();
+              onContextMenu(task, { x, y });
+            }, LONG_PRESS_MS),
+          };
+        }}
+        onPointerMove={(e) => {
+          const pressed = longPress.current;
+          if (!pressed) return;
+          if (Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) > LONG_PRESS_MOVE_TOLERANCE_PX)
+            cancelLongPress();
+        }}
+        onPointerUp={cancelLongPress}
+        onPointerCancel={cancelLongPress}
+        onClick={() => {
+          if (clickGuard.current) return;
+          if (Date.now() - contextMenuAt.current < CONTEXT_MENU_CLICK_GRACE_MS) return;
           onOpen(task);
-        }
-      }}
-      // -webkit-touch-callout: иначе долгое нажатие в Safari поднимает
-      // нативную выноску поверх нашего меню. select-none уже есть.
-      className={`cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] ${
-        isDragging ? "opacity-30" : ""
-      }`}
-    >
-      <TaskCardView
-        task={task}
-        project={project}
-        running={running}
-        sinceFetchSeconds={sinceFetchSeconds}
-      />
+        }}
+        onContextMenu={(e) => {
+          // Правый клик, клавиши Menu / Shift+F10 (клавиатурная доступность
+          // достаётся бесплатно) и долгое нажатие в Chromium на Android.
+          // iOS Safari сюда не приходит — его обслуживает таймер выше.
+          e.preventDefault();
+          cancelLongPress();
+          contextMenuAt.current = Date.now();
+          onContextMenu(task, { x: e.clientX, y: e.clientY });
+        }}
+        onKeyDown={(e) => {
+          // dnd-kit даёт карточке role=button и tabIndex, но Enter сам не обработает
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpen(task);
+          }
+        }}
+        // -webkit-touch-callout: иначе долгое нажатие в Safari поднимает
+        // нативную выноску поверх нашего меню. select-none уже есть.
+        className={`cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] ${
+          isDragging ? "opacity-30" : ""
+        }`}
+      >
+        <TaskCardView
+          task={task}
+          project={project}
+          running={running}
+          sinceFetchSeconds={sinceFetchSeconds}
+          hasPromptAction
+        />
+      </div>
+      {/* Sibling of the draggable button: pointer/keyboard events must never
+          activate drag, long-press or the task editor. */}
+      <button
+        type="button"
+        aria-label={`Промпт для задачи «${task.title}»`}
+        title="Сгенерировать промпт для кодового агента"
+        onClick={() => { if (!clickGuard.current) onPrompt(task); }}
+        disabled={isDragging}
+        className="absolute top-1.5 right-1.5 flex min-h-9 items-center rounded-md px-2 font-mono text-[11px] text-ai transition hover:bg-ai/10 disabled:opacity-30"
+      >
+        Промпт
+      </button>
     </div>
   );
 }

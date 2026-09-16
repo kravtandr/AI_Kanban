@@ -6,6 +6,7 @@ from app.api.deps import get_current_user
 from app.config import get_settings
 from app.db import get_db
 from app.schemas import (
+    AgentPromptOut,
     DraftIn,
     DraftOut,
     ExpenseDraftOut,
@@ -68,6 +69,17 @@ def enhance(task_id: int, db: Session = Depends(get_db)):
         ai_ok=result.ok,
         ai_error=result.error,
     )
+
+
+@router.post("/agent-prompt/{task_id}", response_model=AgentPromptOut)
+def agent_prompt(task_id: int, db: Session = Depends(get_db)):
+    try:
+        task = task_svc.get_task(db, task_id)
+    except task_svc.TaskError as exc:
+        raise HTTPException(
+            status_code=404, detail={"code": "not_found", "message": str(exc)}
+        ) from exc
+    return ai_svc.generate_agent_prompt(db, task)
 
 
 @router.post("/insights", response_model=InsightsOut)
