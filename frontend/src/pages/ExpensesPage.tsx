@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ExpenseCardView } from "../components/ExpenseCard";
+import ExpenseCharts from "../components/ExpenseCharts";
 import ExpenseColumn from "../components/ExpenseColumn";
 import ExpenseModal from "../components/ExpenseModal";
 import ExpenseQuickAdd from "../components/ExpenseQuickAdd";
@@ -198,8 +199,13 @@ export default function ExpensesPage() {
         </div>
       </header>
 
-      <main className="flex flex-1 flex-col overflow-hidden p-3 md:p-4">
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 md:p-4">
         {summaryQuery.data && <ExpenseSummaryBar summary={summaryQuery.data} />}
+
+        {expensesQuery.isPending && <p className="mb-4 text-sm text-dim" role="status">Загружаем графики трат…</p>}
+        {!expensesQuery.isPending && !expensesQuery.isError && (
+          <ExpenseCharts expenses={expenses} onOpen={openExpense} filtered={Boolean(tag || debouncedQ)} />
+        )}
 
         {expensesQuery.isError && (
           <p className="p-4 text-sm text-danger">Не удалось загрузить траты — обновите страницу</p>
@@ -245,7 +251,7 @@ export default function ExpensesPage() {
                 </>
               )}
             </div>
-            <div className="flex flex-1 gap-3 overflow-hidden">
+            <div className="flex min-h-[22rem] flex-1 shrink-0 gap-3 overflow-hidden" role="region" aria-label="Доска трат">
               {EXPENSE_COLUMNS.map((c) => (
                 <ExpenseColumn
                   key={c.id}

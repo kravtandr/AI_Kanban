@@ -44,13 +44,32 @@ describe("ExpensesPage", () => {
     vi.spyOn(api, "expenses").mockResolvedValue([REC, WANT]);
     vi.spyOn(api, "expenseSummary").mockResolvedValue(SUMMARY);
     renderPage();
-    await waitFor(() => expect(screen.getByText("Netflix")).toBeInTheDocument());
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "Доска трат" })).getByText("Netflix")).toBeInTheDocument());
     expect(screen.getByText("Монитор")).toBeInTheDocument();
     for (const title of ["Регулярные", "Хочу купить", "Куплено"]) {
       expect(screen.getAllByText(title).length).toBeGreaterThan(0);
     }
     const wantCard = screen.getByRole("button", { name: /Монитор/ });
     expect(within(wantCard).getByText("35 000 ₽")).toBeInTheDocument();
+  });
+
+  it("opens an expense from the chart and labels filtered charts", async () => {
+    vi.spyOn(api, "expenses").mockResolvedValue([REC]);
+    vi.spyOn(api, "expenseSummary").mockResolvedValue(SUMMARY);
+    renderPage("/expenses?tag=video");
+    const chart = await screen.findByRole("region", { name: "Структура трат" });
+    expect(within(chart).getByText(/по фильтрам доски/)).toBeInTheDocument();
+    act(() => within(chart).getByRole("button", { name: /Netflix/ }).click());
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Название")).toHaveValue("Netflix");
+  });
+
+  it("does not show zero-valued charts while expenses are loading", () => {
+    vi.spyOn(api, "expenses").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "expenseSummary").mockResolvedValue(SUMMARY);
+    renderPage();
+    expect(screen.getByText("Загружаем графики трат…")).toHaveAttribute("role", "status");
+    expect(screen.queryByRole("region", { name: "Структура трат" })).toBeNull();
   });
 
   it("?inactive=1 запрашивает include_inactive и показывает паузу", async () => {
@@ -91,6 +110,7 @@ describe("ExpensesPage", () => {
     // ожидаемое поведение — перетаскивать всё равно нечего.
     expect(screen.queryByRole("button", { name: /^Хочу купить/ })).toBeNull();
     expect(screen.queryByLabelText("Добавить трату в выбранную колонку")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Структура трат" })).toBeNull();
   });
 
   it("настоящий drag через PointerSensor: мобильные табы заменяются drop-зонами", async () => {
