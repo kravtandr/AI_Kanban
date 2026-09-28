@@ -1,8 +1,9 @@
 import { useDraggable } from "@dnd-kit/core";
-import type { MutableRefObject } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { formatDue } from "../lib/dates";
 import { formatRub } from "../lib/money";
 import { PERIODS, type Expense } from "../types";
+import ExpenseTagMenu from "./ExpenseTagMenu";
 
 interface ViewProps {
   expense: Expense;
@@ -87,27 +88,69 @@ interface Props {
 }
 
 export default function ExpenseCard({ expense, onOpen, clickGuard }: Props) {
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const contextAt = useRef(-Infinity);
+  const hold = useRef<{ timer: number; x: number; y: number } | null>(null);
+  const cancelHold = () => {
+    if (hold.current) clearTimeout(hold.current.timer);
+    hold.current = null;
+  };
+  useEffect(() => cancelHold, []);
+  const openMenu = (at: { x: number; y: number }, element: HTMLElement) => {
+    cancelHold();
+    if (clickGuard.current) return;
+    element.focus();
+    contextAt.current = Date.now();
+    setMenuAt(at);
+  };
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `expense-${expense.id}`,
     data: { expense },
   });
   return (
+    <>
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
+      aria-haspopup="menu"
+      aria-expanded={menuAt !== null}
+      onPointerDown={(event) => {
+        listeners?.onPointerDown?.(event);
+        if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
+        cancelHold();
+        const { clientX: x, clientY: y, currentTarget } = event;
+        hold.current = { x, y, timer: window.setTimeout(() => openMenu({ x, y }, currentTarget), 500) };
+      }}
+      onPointerMove={(event) => {
+        if (hold.current && Math.hypot(event.clientX - hold.current.x, event.clientY - hold.current.y) > 8) cancelHold();
+      }}
+      onPointerUp={cancelHold}
+      onPointerCancel={cancelHold}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        openMenu({ x: event.clientX, y: event.clientY }, event.currentTarget);
+      }}
       onClick={() => {
-        if (!clickGuard.current) onOpen(expense);
+        if (!clickGuard.current && !menuAt && Date.now() - contextAt.current >= 500) onOpen(expense);
       }}
       onKeyDown={(e) => {
+        if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+          e.preventDefault();
+          const rect = e.currentTarget.getBoundingClientRect();
+          openMenu({ x: rect.left, y: rect.bottom }, e.currentTarget);
+          return;
+        }
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onOpen(expense);
         }
       }}
-      className={`cursor-grab touch-manipulation select-none ${isDragging ? "opacity-30" : ""}`}
+      className={`cursor-grab touch-manipulation select-none [-webkit-touch-callout:none] ${isDragging ? "opacity-30" : ""}`}
     >
       <ExpenseCardView expense={expense} />
     </div>
+    {menuAt && <ExpenseTagMenu expense={expense} at={menuAt} onClose={() => setMenuAt(null)} />}
+    </>
   );
 }
