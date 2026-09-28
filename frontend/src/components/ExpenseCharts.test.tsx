@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Expense } from "../types";
 import ExpenseCharts from "./ExpenseCharts";
 
@@ -12,6 +12,51 @@ const REC: Expense = {
 };
 
 describe("ExpenseCharts", () => {
+  beforeEach(() => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("collapses both charts with the keyboard, remembers it and preserves chart state", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<ExpenseCharts expenses={[{ ...REC, tags: ["дом"] }]} onOpen={() => {}} today={new Date(2026, 0, 17)} />);
+    await user.click(screen.getByRole("button", { name: "По тегам" }));
+    await user.click(screen.getByRole("button", { name: "Следующий месяц" }));
+    const toggle = screen.getByRole("button", { name: /Свернуть.*Структура трат и календарь оплат/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    toggle.focus();
+    await user.keyboard("{Enter}");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: "Структура трат" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Календарь оплат" })).toBeNull();
+    await user.keyboard(" ");
+    expect(screen.getByRole("button", { name: "По тегам" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("февраль 2026")).toBeVisible();
+    await user.click(toggle);
+    unmount();
+    render(<ExpenseCharts expenses={[REC]} onOpen={() => {}} />);
+    expect(screen.getByRole("button", { name: /Развернуть.*Структура трат и календарь оплат/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: "Календарь оплат" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /Развернуть.*Структура трат и календарь оплат/ }));
+    expect(screen.getByRole("region", { name: "Календарь оплат" })).toBeVisible();
+  });
+
+  it("still toggles when browser storage is unavailable", async () => {
+    const get = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    const set = vi.spyOn(window.localStorage, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    try {
+      render(<ExpenseCharts expenses={[REC]} onOpen={() => {}} />);
+      await userEvent.click(screen.getByRole("button", { name: /Свернуть.*Структура трат и календарь оплат/ }));
+      expect(screen.queryByRole("region", { name: "Структура трат" })).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: /Развернуть.*Структура трат и календарь оплат/ }));
+      expect(screen.getByRole("region", { name: "Структура трат" })).toBeVisible();
+    } finally { get.mockRestore(); set.mockRestore(); }
+  });
+
   it("switches to tag categories without double-counting and back to expenses", async () => {
     const onOpen = vi.fn();
     render(<ExpenseCharts expenses={[

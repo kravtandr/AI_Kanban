@@ -1,9 +1,10 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { useId, useMemo, useState, type CSSProperties } from "react";
 import { expenseColor, monthlyBreakdown, tagBreakdown, tagColor } from "../lib/expenseCharts";
 import { formatRub } from "../lib/money";
 import type { Expense } from "../types";
 import PaymentCalendar from "./PaymentCalendar";
 
+const COLLAPSED_KEY = "tasktracker.expense-charts.collapsed";
 const CIRCUMFERENCE = 2 * Math.PI * 82;
 
 interface ChartItem {
@@ -22,6 +23,17 @@ interface Props {
 }
 
 export default function ExpenseCharts({ expenses, onOpen, today = new Date(), filtered = false }: Props) {
+  const panelId = useId();
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return window.localStorage.getItem(COLLAPSED_KEY) === "true"; }
+    catch { return false; }
+  });
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { window.localStorage.setItem(COLLAPSED_KEY, String(next)); }
+    catch { /* The charts remain usable when storage is blocked. */ }
+  };
   const monthly = useMemo(() => monthlyBreakdown(expenses), [expenses]);
   const total = monthly.total;
   const [mode, setMode] = useState<"expenses" | "tags">("expenses");
@@ -39,7 +51,17 @@ export default function ExpenseCharts({ expenses, onOpen, today = new Date(), fi
   let offset = 0;
 
   return (
-    <div className="expense-charts">
+    <div className="min-w-0 shrink-0">
+      <button type="button" className="mb-3 flex min-h-10 w-full items-center gap-2 rounded-lg border border-edge bg-panel px-3 py-2 text-left text-sm text-dim hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        aria-expanded={!collapsed} aria-controls={panelId}
+        aria-label={`${collapsed ? "Развернуть" : "Свернуть"}: Структура трат и календарь оплат`}
+        onClick={toggleCollapsed}>
+        <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+        <span className="flex-1">Структура трат и календарь оплат</span>
+        <span className="hidden text-xs sm:inline">{collapsed ? "Развернуть" : "Свернуть"}</span>
+      </button>
+      <div id={panelId} hidden={collapsed}>
+      <div className="expense-charts">
       <section className="expense-breakdown" aria-labelledby="expense-breakdown-title">
         <div className="expense-chart-heading">
           <div>
@@ -112,6 +134,8 @@ export default function ExpenseCharts({ expenses, onOpen, today = new Date(), fi
         <p className="expense-chart-note">Дневные, квартальные и годовые платежи приведены к месяцу. Траты на паузе не учитываются.</p>
       </section>
       <PaymentCalendar expenses={expenses} onOpen={onOpen} today={today} filtered={filtered} />
+      </div>
+      </div>
     </div>
   );
 }
