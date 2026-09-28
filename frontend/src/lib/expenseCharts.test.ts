@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Expense } from "../types";
-import { monthlyBreakdown, paymentDays } from "./expenseCharts";
+import { monthlyBreakdown, paymentDays, tagBreakdown } from "./expenseCharts";
 
 const expense = (fields: Partial<Expense> = {}): Expense => ({
   id: 1, title: "Подписка", note: "", amount: 12000, status: "recurring",
@@ -69,5 +69,35 @@ describe("monthlyBreakdown", () => {
 
   it("returns an empty breakdown without invalid proportions", () => {
     expect(monthlyBreakdown([])).toEqual({ items: [], total: 0 });
+  });
+});
+
+
+describe("tagBreakdown", () => {
+  it("splits the normalized monthly cost across unique tags", () => {
+    const monthly = monthlyBreakdown([
+      expense({ tags: [" Дом ", "дом", "связь"], period: "year" }),
+      expense({ id: 2, tags: ["дом"], period: "quarter" }),
+      expense({ id: 3, tags: [], amount: 6000 }),
+    ]);
+    const groups = tagBreakdown(monthly.items);
+    expect(groups).toEqual([
+      { tag: null, amount: 6000 }, { tag: "дом", amount: 4500 }, { tag: "связь", amount: 500 },
+    ]);
+    expect(groups.reduce((sum, group) => sum + group.amount, 0)).toBe(monthly.total);
+  });
+
+  it("keeps the actual tag Без тега separate from untagged expenses", () => {
+    expect(tagBreakdown(monthlyBreakdown([
+      expense({ tags: ["без тега"] }), expense({ id: 2, tags: [" "] }),
+    ]).items)).toEqual([{ tag: null, amount: 12000 }, { tag: "без тега", amount: 12000 }]);
+  });
+
+  it("handles three-way fractional shares without rounding each expense prematurely", () => {
+    const groups = tagBreakdown(monthlyBreakdown([expense({ amount: 100, tags: ["a", "b", "c"] })]).items);
+    expect(groups).toHaveLength(3);
+    expect(groups[0].amount).toBeCloseTo(33.3333333333);
+    expect(groups.reduce((sum, group) => sum + group.amount, 0)).toBeCloseTo(100);
+    expect(tagBreakdown([])).toEqual([]);
   });
 });

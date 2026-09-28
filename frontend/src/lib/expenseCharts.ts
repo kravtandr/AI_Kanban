@@ -40,3 +40,27 @@ export function monthlyBreakdown(expenses: Expense[]): { items: { expense: Expen
   const total = whole + (remainder > 6 || (remainder === 6 && whole % 2 === 1) ? 1 : 0);
   return { items: weighted.map(({ expense, weight }) => ({ expense, amount: weight / 12 })), total };
 }
+
+export interface TagShare {
+  tag: string | null;
+  amount: number;
+}
+
+/** Split multi-tag expenses evenly so categories partition the same monthly budget. */
+export function tagBreakdown(items: { expense: Expense; amount: number }[]): TagShare[] {
+  const amounts = new Map<string | null, number>();
+  for (const { expense, amount } of items) {
+    const tags: (string | null)[] = [...new Set(expense.tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))];
+    if (tags.length === 0) tags.push(null);
+    for (const tag of tags) amounts.set(tag, (amounts.get(tag) ?? 0) + amount / tags.length);
+  }
+  return Array.from(amounts, ([tag, amount]) => ({ tag, amount }))
+    .sort((a, b) => b.amount - a.amount || (a.tag ?? "").localeCompare(b.tag ?? "", "ru"));
+}
+
+export function tagColor(tag: string | null): string {
+  if (tag === null) return "#8a94a3";
+  let hash = 0;
+  for (const char of tag) hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
+  return COLORS[hash % COLORS.length];
+}

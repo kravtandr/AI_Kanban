@@ -1,13 +1,17 @@
 import { useMemo, useState, type CSSProperties } from "react";
-import { expenseColor, monthlyBreakdown } from "../lib/expenseCharts";
+import { expenseColor, monthlyBreakdown, tagBreakdown, tagColor } from "../lib/expenseCharts";
 import { formatRub } from "../lib/money";
 import type { Expense } from "../types";
 import PaymentCalendar from "./PaymentCalendar";
 
 const CIRCUMFERENCE = 2 * Math.PI * 82;
 
-function expenseStyle(id: number): CSSProperties {
-  return { "--expense-color": expenseColor(id) } as CSSProperties;
+interface ChartItem {
+  key: string;
+  label: string;
+  amount: number;
+  color: string;
+  expense?: Expense;
 }
 
 interface Props {
@@ -18,9 +22,19 @@ interface Props {
 }
 
 export default function ExpenseCharts({ expenses, onOpen, today = new Date(), filtered = false }: Props) {
-  const { items, total } = useMemo(() => monthlyBreakdown(expenses), [expenses]);
-  const [highlighted, setHighlighted] = useState<number | null>(null);
-  const selected = items.find((item) => item.expense.id === highlighted);
+  const monthly = useMemo(() => monthlyBreakdown(expenses), [expenses]);
+  const total = monthly.total;
+  const [mode, setMode] = useState<"expenses" | "tags">("expenses");
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  const items: ChartItem[] = useMemo(() => mode === "tags"
+    ? tagBreakdown(monthly.items).map(({ tag, amount }) => ({
+      key: tag === null ? "untagged" : `tag:${tag}`, label: tag === null ? "Без тега" : `#${tag}`,
+      amount, color: tagColor(tag),
+    }))
+    : monthly.items.map(({ expense, amount }) => ({
+      key: `expense:${expense.id}`, label: expense.title, amount, color: expenseColor(expense.id), expense,
+    })), [monthly, mode]);
+  const selected = items.find((item) => item.key === highlighted);
   const unroundedTotal = items.reduce((sum, item) => sum + item.amount, 0);
   let offset = 0;
 
@@ -35,44 +49,51 @@ export default function ExpenseCharts({ expenses, onOpen, today = new Date(), fi
           <span className="expense-chart-unit">₽ / мес.</span>
         </div>
 
+        <div className="mx-5 mt-3 flex w-fit gap-1 rounded-lg border border-edge bg-night p-1" role="group" aria-label="Группировка структуры трат">
+          {([["expenses", "По тратам"], ["tags", "По тегам"]] as const).map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={mode === value}
+              className={`tab ${mode === value ? "bg-panel text-ink" : "text-dim hover:text-ink"}`}
+              onClick={() => { setMode(value); setHighlighted(null); }}>{label}</button>
+          ))}
+        </div>
         {items.length > 0 ? (
           <div className="expense-breakdown-body">
             <div className="expense-donut">
-              <svg viewBox="0 0 200 200" role="img" aria-label={`Регулярные траты: ${formatRub(total)} в среднем за месяц`}>
+              <svg viewBox="0 0 200 200" role="img" aria-label={`Регулярные траты${mode === "tags" ? " по тегам" : ""}: ${formatRub(total)} в среднем за месяц`}>
                 <circle cx="100" cy="100" r="82" fill="none" stroke="var(--color-edge)" strokeWidth="20" />
-                {items.map(({ expense, amount }) => {
+                {items.map(({ key, color, amount }) => {
                   const length = amount / unroundedTotal * CIRCUMFERENCE;
                   const gap = items.length === 1 ? 0 : Math.min(4, length / 4);
                   const start = offset;
                   offset += length;
                   return (
                     <circle
-                      key={expense.id} cx="100" cy="100" r="82" fill="none"
-                      stroke={expenseColor(expense.id)} strokeWidth={highlighted === expense.id ? 25 : 20}
+                      key={key} cx="100" cy="100" r="82" fill="none"
+                      stroke={color} strokeWidth={highlighted === key ? 25 : 20}
                       strokeDasharray={`${length - gap} ${CIRCUMFERENCE - length + gap}`}
                       strokeDashoffset={-start - gap / 2} transform="rotate(-90 100 100)"
-                      opacity={selected && highlighted !== expense.id ? 0.28 : 1}
+                      opacity={selected && highlighted !== key ? 0.28 : 1}
                     />
                   );
                 })}
               </svg>
               <div className="expense-donut-label" aria-hidden="true">
-                <span>{selected ? selected.expense.title : "В месяц"}</span>
+                <span>{selected ? selected.label : "В месяц"}</span>
                 <strong>{formatRub(selected ? Math.round(selected.amount) : total)}</strong>
-                <small>{selected ? `${(selected.amount / unroundedTotal * 100).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}% бюджета` : `${items.length} регулярных трат`}</small>
+                <small>{selected ? `${(selected.amount / unroundedTotal * 100).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}% бюджета` : mode === "tags" ? `Категорий: ${items.length}` : `${items.length} регулярных трат`}</small>
               </div>
             </div>
-            <ul className="expense-chart-legend" aria-label="Доли регулярных трат">
-              {items.map(({ expense, amount }) => (
-                <li key={expense.id}>
+            <ul className="expense-chart-legend" aria-label={mode === "tags" ? "Доли по тегам" : "Доли регулярных трат"}>
+              {items.map(({ key, label, color, expense, amount }) => (
+                <li key={key}>
                   <button
-                    type="button" onClick={() => onOpen(expense)}
-                    onMouseEnter={() => setHighlighted(expense.id)} onMouseLeave={() => setHighlighted(null)}
-                    onFocus={() => setHighlighted(expense.id)} onBlur={() => setHighlighted(null)}
-                    style={expenseStyle(expense.id)}
+                    type="button" onClick={() => expense ? onOpen(expense) : setHighlighted(key)}
+                    onMouseEnter={() => setHighlighted(key)} onMouseLeave={() => setHighlighted(null)}
+                    onFocus={() => setHighlighted(key)} onBlur={() => setHighlighted(null)}
+                    style={{ "--expense-color": color } as CSSProperties}
                   >
                     <span className="expense-color-dot" aria-hidden="true" />
-                    <span className="expense-legend-name" title={expense.title}>{expense.title}</span>
+                    <span className="expense-legend-name" title={label}>{label}</span>
                     <span className="expense-legend-value">{formatRub(Math.round(amount))}</span>
                     <span className="expense-legend-percent">{(amount / unroundedTotal * 100).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</span>
                   </button>
@@ -87,6 +108,7 @@ export default function ExpenseCharts({ expenses, onOpen, today = new Date(), fi
             <p>Добавьте трату с суммой больше нуля или измените фильтры.</p>
           </div>
         )}
+        {mode === "tags" && <p className="expense-chart-note">Категории — это теги. Если у траты несколько тегов, сумма делится между ними поровну. Без тегов — «Без тега».</p>}
         <p className="expense-chart-note">Дневные, квартальные и годовые платежи приведены к месяцу. Траты на паузе не учитываются.</p>
       </section>
       <PaymentCalendar expenses={expenses} onOpen={onOpen} today={today} filtered={filtered} />

@@ -12,6 +12,42 @@ const REC: Expense = {
 };
 
 describe("ExpenseCharts", () => {
+  it("switches to tag categories without double-counting and back to expenses", async () => {
+    const onOpen = vi.fn();
+    render(<ExpenseCharts expenses={[
+      { ...REC, tags: ["дом", "связь"] },
+      { ...REC, id: 2, title: "Аренда", amount: 100000, tags: ["дом"] },
+      { ...REC, id: 3, title: "Без категории", amount: 10000 },
+      { ...REC, id: 4, title: "Пауза", amount: 500000, tags: ["пауза"], active: false },
+    ]} onOpen={onOpen} />);
+    const chart = within(screen.getByRole("region", { name: "Структура трат" }));
+    await userEvent.click(chart.getByRole("button", { name: "По тегам" }));
+    expect(chart.getByRole("button", { name: "По тегам" })).toHaveAttribute("aria-pressed", "true");
+    expect(chart.getByRole("img")).toHaveAccessibleName(/2.000.*₽/);
+    expect(chart.getByRole("button", { name: /#дом.*1\s450.*72,5%/ })).toBeInTheDocument();
+    expect(chart.getByRole("button", { name: /#связь.*450.*22,5%/ })).toBeInTheDocument();
+    expect(chart.getByRole("button", { name: /Без тега.*100.*5%/ })).toBeInTheDocument();
+    expect(chart.queryByText("#пауза")).toBeNull();
+    await userEvent.click(chart.getByRole("button", { name: /#дом/ }));
+    expect(onOpen).not.toHaveBeenCalled();
+    await userEvent.click(chart.getByRole("button", { name: "По тратам" }));
+    await userEvent.click(chart.getByRole("button", { name: /Интернет/ }));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+  });
+
+  it("updates categories when tags or board filters change and keeps the chosen mode", async () => {
+    const { rerender } = render(<ExpenseCharts expenses={[{ ...REC, tags: ["дом", "дом"] }]} onOpen={() => {}} />);
+    const chart = within(screen.getByRole("region", { name: "Структура трат" }));
+    await userEvent.click(chart.getByRole("button", { name: "По тегам" }));
+    expect(chart.getByRole("button", { name: /#дом.*900.*100%/ })).toBeInTheDocument();
+    rerender(<ExpenseCharts expenses={[{ ...REC, tags: ["работа"] }]} onOpen={() => {}} filtered />);
+    expect(chart.queryByText("#дом")).toBeNull();
+    expect(chart.getByRole("button", { name: /#работа.*900.*100%/ })).toBeInTheDocument();
+    rerender(<ExpenseCharts expenses={[]} onOpen={() => {}} filtered />);
+    expect(chart.getByText("Нет регулярных трат")).toBeInTheDocument();
+    expect(chart.queryByRole("img")).toBeNull();
+  });
+
   it("shows a monthly breakdown and opens the selected expense using the keyboard", async () => {
     const onOpen = vi.fn();
     render(<ExpenseCharts expenses={[REC]} onOpen={onOpen} today={new Date(2026, 8, 17)} />);
