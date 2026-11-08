@@ -215,3 +215,8 @@ export interface ExpenseSummary {
   bought_this_month: number;
   currency: string;
 }
+
+export interface MonthlyBudget {
+  salary: number;
+  freelance: { title: string; amount: number }[];
+}

@@ -1,7 +1,18 @@
 from datetime import UTC, date, datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -46,6 +57,17 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str] = mapped_column(String(256))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class MonthlyBudget(Base):
+    __tablename__ = "monthly_budgets"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    month: Mapped[str] = mapped_column(String(7), primary_key=True)
+    salary: Mapped[int] = mapped_column(BigInteger)
+    freelance: Mapped[list[dict[str, str | int]]] = mapped_column(JSON)
 
 
 class SessionToken(Base):

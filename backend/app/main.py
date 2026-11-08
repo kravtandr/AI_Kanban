@@ -13,7 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.api import ai, analytics, auth, expenses, projects, tasks
+from app.api import ai, analytics, auth, budget, expenses, projects, tasks
 from app.bootstrap import init_db
 from app.config import get_settings
 from app.db import get_session_factory
@@ -258,6 +258,7 @@ def create_app() -> FastAPI:
         ai.router,
         analytics.router,
         expenses.router,
+        budget.router,
     ):
         app.include_router(router, prefix="/api/v1")
 

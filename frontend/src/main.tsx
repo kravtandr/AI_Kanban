@@ -3,6 +3,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import BoardPage from "./pages/BoardPage";
+import BudgetPage from "./pages/BudgetPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import LoginPage from "./pages/LoginPage";
 import "./styles.css";
@@ -21,6 +22,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="/login" element={<LoginPage />} />
           <Route path="/board" element={<BoardPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />
+          <Route path="/budget" element={<BudgetPage />} />
           <Route path="*" element={<Navigate to="/board" replace />} />
         </Routes>
       </BrowserRouter>

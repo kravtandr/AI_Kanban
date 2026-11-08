@@ -5,6 +5,7 @@ import type {
   ExpenseDraftResponse,
   ExpenseSummary,
   Insights,
+  MonthlyBudget,
   Project,
   Task,
   User,
@@ -91,6 +92,10 @@ export const api = {
   // которое react-query не пре-фетчит (NFR-6, §10.1).
   insights: (days: number) =>
     request<Insights>("/ai/insights", { method: "POST", body: JSON.stringify({ days }) }),
+
+  budget: (month: string) => request<MonthlyBudget>(`/budget/${month}`),
+  saveBudget: (month: string, body: MonthlyBudget) =>
+    request<MonthlyBudget>(`/budget/${month}`, { method: "PUT", body: JSON.stringify(body) }),
 
   expenses: (params: URLSearchParams) => request<Expense[]>(`/expenses?${params.toString()}`),
   createExpense: (body: Partial<Expense> & { title: string; amount: number; ai_meta?: unknown }) =>

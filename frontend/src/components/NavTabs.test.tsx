@@ -13,5 +13,6 @@ describe("NavTabs", () => {
     expect(screen.getByRole("link", { name: "траты" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "задачи" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("link", { name: "задачи" })).toHaveAttribute("href", "/board");
+    expect(screen.getByRole("link", { name: "бюджет" })).toHaveAttribute("href", "/budget");
   });
 });

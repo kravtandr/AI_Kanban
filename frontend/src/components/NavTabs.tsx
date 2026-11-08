@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 const TABS = [
   { to: "/board", label: "задачи" },
   { to: "/expenses", label: "траты" },
+  { to: "/budget", label: "бюджет" },
 ];
 
 /** Переключатель разделов в шапке. Моно-ссылки в тон кнопкам «время»/«выйти»;
