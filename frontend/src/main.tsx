@@ -6,6 +6,7 @@ import BoardPage from "./pages/BoardPage";
 import BudgetPage from "./pages/BudgetPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import LoginPage from "./pages/LoginPage";
+import McpPage from "./pages/McpPage";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -23,6 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="/board" element={<BoardPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />
           <Route path="/budget" element={<BudgetPage />} />
+          <Route path="/integrations/mcp" element={<McpPage />} />
           <Route path="*" element={<Navigate to="/board" replace />} />
         </Routes>
       </BrowserRouter>

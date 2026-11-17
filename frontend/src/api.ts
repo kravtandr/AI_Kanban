@@ -5,6 +5,7 @@ import type {
   ExpenseDraftResponse,
   ExpenseSummary,
   Insights,
+  McpTool,
   MonthlyBudget,
   Project,
   Task,
@@ -53,6 +54,7 @@ export const api = {
   login: (username: string, password: string) =>
     request<User>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+  mcpTools: () => request<McpTool[]>("/mcp/tools"),
   me: () => request<User>("/auth/me"),
 
   projects: () => request<Project[]>("/projects"),

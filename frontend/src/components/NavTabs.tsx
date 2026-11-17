@@ -4,6 +4,7 @@ const TABS = [
   { to: "/board", label: "задачи" },
   { to: "/expenses", label: "траты" },
   { to: "/budget", label: "бюджет" },
+  { to: "/integrations/mcp", label: "MCP" },
 ];
 
 /** Переключатель разделов в шапке. Моно-ссылки в тон кнопкам «время»/«выйти»;

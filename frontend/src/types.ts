@@ -220,3 +220,12 @@ export interface MonthlyBudget {
   salary: number;
   freelance: { title: string; amount: number }[];
 }
+
+export interface McpTool {
+  name: string;
+  description?: string;
+  inputSchema: {
+    properties?: Record<string, { description?: string; [keyword: string]: unknown }>;
+    required?: string[];
+  };
+}
