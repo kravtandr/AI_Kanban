@@ -1,205 +1,437 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api";
+import McpCopyButton from "../components/McpCopyButton";
 import NavTabs from "../components/NavTabs";
+import {
+  MCP_GROUPS,
+  PARAMETER_HINTS,
+  schemaType,
+  toolExample,
+  toolInfo,
+  type McpGroup,
+} from "../lib/mcpCatalog";
 import type { McpTool } from "../types";
 
-const TOKEN_COMMAND = "docker compose exec app python -m app.cli create-token claude-code --kind mcp";
-
-const COVERAGE = [
-  {
-    section: "Задачи",
-    status: "Основные операции",
-    tone: "text-mcp",
-    description: "Поиск, создание, правки, статусы, удаление и статистика. Проекты можно просматривать, но управлять ими отдельно через MCP нельзя.",
-  },
-  {
-    section: "Траты",
-    status: "Частичное покрытие",
-    tone: "text-amber",
-    description: "Список, создание, правки и сводка. Правками можно ставить подписки на паузу и отмечать покупки. Удаления и ручной сортировки нет.",
-  },
-  {
-    section: "Бюджет",
-    status: "Только в веб-интерфейсе",
-    tone: "text-dim",
-    description: "Зарплата, фриланс и цели за месяц. Сводка трат содержит расходы и ближайшие списания.",
-  },
-];
-
-function CopyBlock({ label, value }: { label: string; value: string }) {
-  const [feedback, setFeedback] = useState("");
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setFeedback("Скопировано");
-    } catch {
-      setFeedback("Выделите и скопируйте текст вручную");
-    }
-  }
-
-  return (
-    <div className="min-w-0 rounded-lg border border-edge bg-night">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 border-b border-edge px-3">
-        <span className="py-2 text-sm text-dim">{label}</span>
-        <button
-          type="button"
-          className="min-h-9 rounded px-2 text-xs text-mcp hover:bg-mcp/10"
-          aria-label={`Копировать: ${label}`}
-          onClick={() => void copy()}
-        >
-          Копировать
-        </button>
-      </div>
-      <pre className="overflow-x-auto p-3 text-xs leading-relaxed"><code>{value}</code></pre>
-      {feedback && <p role="status" className="px-3 pb-2 text-xs text-mcp">{feedback}</p>}
-    </div>
-  );
-}
-
-function ToolDetails({ tool }: { tool: McpTool }) {
+function ToolPanel({ tool }: { tool: McpTool }) {
+  const info = toolInfo(tool);
   const parameters = Object.entries(tool.inputSchema.properties ?? {});
+  const [view, setView] = useState<"example" | "schema">("example");
+  const snippet =
+    view === "example"
+      ? toolExample(tool)
+      : JSON.stringify(tool.inputSchema, null, 2);
+
   return (
-    <details className="group border-b border-edge last:border-b-0">
-      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-panel [&::-webkit-details-marker]:hidden">
-        <code className="min-w-0 break-all text-sm text-mcp">{tool.name}</code>
-        <span className="shrink-0 font-mono text-sm text-dim group-open:rotate-90" aria-hidden="true">›</span>
-      </summary>
-      <div className="space-y-3 px-4 pb-4">
-        {tool.description && <p className="text-sm leading-relaxed text-dim">{tool.description}</p>}
-        {parameters.length > 0 ? (
-          <>
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-edge text-dim">
-                <tr><th scope="col" className="py-2">Параметр</th><th scope="col" className="py-2">Ввод</th></tr>
+    <article className="mcp-tool-panel" aria-label={info.title}>
+      <div className="mcp-tool-heading">
+        <span className="mcp-section-name">{info.group}</span>
+        <span className="mcp-effect" data-effect={info.effect}>
+          {info.effect}
+        </span>
+        <h3>{info.title}</h3>
+        <code className="mcp-tool-id">{tool.name}</code>
+        <p>{info.description}</p>
+      </div>
+      <section className="mcp-parameters" aria-labelledby="mcp-parameters">
+        <h4 id="mcp-parameters">
+          Параметры <span>{parameters.length}</span>
+        </h4>
+        {parameters.length === 0 ? (
+          <p className="py-4 text-sm text-dim">Вызывается без параметров.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="mcp-parameter-table">
+              <thead>
+                <tr>
+                  <th scope="col">Имя и тип</th>
+                  <th scope="col">Описание</th>
+                </tr>
               </thead>
               <tbody>
                 {parameters.map(([name, schema]) => (
-                  <tr key={name} className="border-b border-edge/60 align-top">
-                    <td className="py-2 pr-3">
-                      <code className="break-all">{name}</code>
-                      {schema.description && <p className="mt-1 text-dim">{schema.description}</p>}
+                  <tr key={name}>
+                    <td>
+                      <div>
+                        <code>{name}</code>
+                        {tool.inputSchema.required?.includes(name) && (
+                          <span
+                            className="mcp-required"
+                            title="Обязательный параметр"
+                          >
+                            обязательный
+                          </span>
+                        )}
+                      </div>
+                      <span className="mcp-value-type">
+                        {schemaType(schema)}
+                      </span>
                     </td>
-                    <td className="py-2 text-dim">
-                      {tool.inputSchema.required?.includes(name) ? "Обязательный" : "Необязательный"}
+                    <td>
+                      {PARAMETER_HINTS[name] ??
+                        schema.description ??
+                        "Параметр инструмента"}
+                      {schema.default !== undefined && (
+                        <span className="mcp-default">
+                          По умолчанию{" "}
+                          <code>{JSON.stringify(schema.default)}</code>
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <details>
-              <summary className="w-fit cursor-pointer text-xs text-mcp">JSON Schema</summary>
-              <pre className="mt-2 overflow-x-auto rounded-lg bg-night p-3 text-xs">
-                {JSON.stringify(tool.inputSchema, null, 2)}
-              </pre>
-            </details>
-          </>
-        ) : <p className="text-xs text-dim">Без параметров</p>}
+          </div>
+        )}
+      </section>
+      <section className="mcp-code-section" aria-label="Пример и схема">
+        <div className="mcp-code-toolbar">
+          <div className="mcp-view-switch">
+            <button
+              type="button"
+              aria-pressed={view === "example"}
+              onClick={() => setView("example")}
+            >
+              JSON-вызов
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "schema"}
+              onClick={() => setView("schema")}
+            >
+              JSON Schema
+            </button>
+          </div>
+          <McpCopyButton
+            key={view}
+            label={
+              view === "example" ? "Копировать JSON-вызов" : "Копировать схему"
+            }
+            value={snippet}
+          />
+        </div>
+        <pre>
+          <code>{snippet}</code>
+        </pre>
+        <p className="mcp-example-hint">
+          Замените значения примера своими данными перед вызовом в MCP-клиенте.
+        </p>
+      </section>
+      <details className="mcp-server-description">
+        <summary>Описание, которое видит агент</summary>
+        <p>{tool.description}</p>
+      </details>
+    </article>
+  );
+}
+
+function ConnectionPanel() {
+  const [format, setFormat] = useState("Claude Code");
+  const endpoint = new URL("/mcp", window.location.origin).href;
+  const command = `claude mcp add --transport http tasktracker '${endpoint}' \\\n  --header 'Authorization: Bearer <MCP_TOKEN>'`;
+  const json = JSON.stringify(
+    {
+      mcpServers: {
+        tasktracker: {
+          type: "http",
+          url: endpoint,
+          headers: { Authorization: "Bearer <MCP_TOKEN>" },
+        },
+      },
+    },
+    null,
+    2,
+  );
+
+  return (
+    <section
+      className="mcp-connection-layout"
+      aria-labelledby="mcp-connection-title"
+    >
+      <div className="mcp-connection-guide">
+        <h3 id="mcp-connection-title">
+          Подключите TaskTracker к своему агенту
+        </h3>
+        <p>
+          Сервер использует Streamable HTTP и отдельный Bearer-токен. Компьютер
+          с MCP-клиентом должен иметь доступ к локальной сети сервера.
+        </p>
+        <ol>
+          <li>
+            <strong>Создайте токен на сервере</strong>
+            <p>
+              Выполните в каталоге Docker Compose. Токен выводится один раз.
+            </p>
+            <pre>
+              <code>
+                docker compose exec app python -m app.cli create-token
+                claude-code --kind mcp
+              </code>
+            </pre>
+          </li>
+          <li>
+            <strong>Добавьте сервер в клиент</strong>
+            <p>
+              Скопируйте настройки и замените <code>&lt;MCP_TOKEN&gt;</code>{" "}
+              полученным токеном.
+            </p>
+          </li>
+          <li>
+            <strong>Проверьте подключение</strong>
+            <p>
+              В Claude Code откройте <code>/mcp</code>. Клиент загрузит каталог
+              инструментов сервера.
+            </p>
+          </li>
+        </ol>
+        <p>
+          Для HTTPS с внутренним сертификатом Caddy добавьте его центр
+          сертификации в доверенные на компьютере клиента.
+        </p>
       </div>
-    </details>
+      <div className="mcp-connection-config">
+        <div className="mcp-endpoint">
+          <span>Адрес сервера</span>
+          <code>{endpoint}</code>
+          <McpCopyButton label="Копировать адрес сервера" value={endpoint} />
+        </div>
+        <div className="mcp-code-section">
+          <div className="mcp-code-toolbar">
+            <div className="mcp-view-switch">
+              {["Claude Code", "JSON"].map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={format === label}
+                  onClick={() => setFormat(label)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <McpCopyButton
+              key={format}
+              label="Копировать настройки"
+              value={format === "JSON" ? json : command}
+            />
+          </div>
+          <pre>
+            <code>{format === "JSON" ? json : command}</code>
+          </pre>
+        </div>
+        <div className="mcp-connection-facts">
+          <div>
+            <span>Транспорт</span>
+            <strong>Streamable HTTP</strong>
+          </div>
+          <div>
+            <span>Авторизация</span>
+            <code>Authorization: Bearer &lt;MCP_TOKEN&gt;</code>
+          </div>
+          <div>
+            <span>Путь</span>
+            <code>/mcp</code>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
 export default function McpPage() {
-  const [search, setSearch] = useState("");
   const catalog = useQuery({ queryKey: ["mcp-tools"], queryFn: api.mcpTools });
-  const endpoint = new URL("/mcp", window.location.origin).href;
-  const connect = `claude mcp add --transport http tasktracker '${endpoint}' \\\n  --header 'Authorization: Bearer <MCP_TOKEN>'`;
+  const [search, setSearch] = useState("");
+  const [group, setGroup] = useState<McpGroup>("Все инструменты");
+  const [selectedName, setSelectedName] = useState("list_tasks");
+  const [section, setSection] = useState<"catalog" | "connection">("catalog");
   const query = search.trim().toLowerCase();
-  const tools = catalog.data?.filter((tool) =>
-    `${tool.name} ${tool.description ?? ""}`.toLowerCase().includes(query),
-  );
+  const allTools = catalog.data ?? [];
+  const tools = allTools.filter((tool) => {
+    const info = toolInfo(tool);
+    return (
+      (group === "Все инструменты" || info.group === group) &&
+      `${tool.name} ${tool.description ?? ""} ${info.title} ${info.description}`
+        .toLowerCase()
+        .includes(query)
+    );
+  });
+  const selected = tools.find((tool) => tool.name === selectedName) ?? tools[0];
 
   function logout() {
-    void api.logout().catch(() => undefined).finally(() => window.location.assign("/login"));
+    void api
+      .logout()
+      .catch(() => undefined)
+      .finally(() => window.location.assign("/login"));
   }
 
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge/70 bg-surface p-3 md:px-5">
-        <h1 className="shrink-0 font-mono text-base font-medium"><span className="caret">tasktracker</span></h1>
+        <h1 className="shrink-0 font-mono text-base font-medium">
+          <span className="caret">tasktracker</span>
+        </h1>
         <NavTabs />
-        <button type="button" onClick={logout} className="ml-auto font-mono text-xs text-dim hover:text-ink">выйти</button>
+        <button
+          type="button"
+          onClick={logout}
+          className="ml-auto font-mono text-xs text-dim hover:text-ink"
+        >
+          выйти
+        </button>
       </header>
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl space-y-6 p-3 sm:p-6">
-          <section className="rounded-xl border border-edge border-l-2 border-l-mcp bg-surface p-5 sm:p-7" aria-labelledby="mcp-title">
-            <h2 id="mcp-title" className="font-mono text-3xl font-medium tracking-tight sm:text-4xl">MCP TaskTracker</h2>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-dim sm:text-base">
-              Подключите AI-агента через Model Context Protocol, чтобы работать с задачами и тратами из MCP-клиента.
-            </p>
-            <div className="mt-5 max-w-xl">
-              <CopyBlock label="Адрес сервера · Streamable HTTP" value={endpoint} />
-            </div>
-          </section>
-
-          <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-            <div className="min-w-0 space-y-6">
-              <section aria-labelledby="mcp-connect" className="space-y-3">
-                <h3 id="mcp-connect" className="text-xl font-semibold">Подключение</h3>
-                <ol className="list-decimal space-y-4 pl-5 text-sm">
-                  <li className="space-y-2 pl-1 marker:text-mcp">
-                    <p>Создайте MCP-токен на сервере в каталоге Docker Compose.</p>
-                    <CopyBlock label="Команда для сервера" value={TOKEN_COMMAND} />
-                  </li>
-                  <li className="space-y-2 pl-1 marker:text-mcp">
-                    <p>На компьютере в локальной сети подставьте токен вместо <code>&lt;MCP_TOKEN&gt;</code> и выполните команду.</p>
-                    <CopyBlock label="Claude Code" value={connect} />
-                  </li>
-                  <li className="pl-1 marker:text-mcp">
-                    Проверьте подключение командой <code className="text-mcp">/mcp</code> внутри Claude Code.
-                  </li>
-                </ol>
-                <p className="text-sm leading-relaxed text-dim">
-                  Для другого клиента выберите Streamable HTTP и укажите заголовок{" "}
-                  <code className="break-words text-ink">Authorization: Bearer &lt;MCP_TOKEN&gt;</code>.
-                  Для HTTPS с внутренним сертификатом Caddy клиенту нужно доверять его центру сертификации.
-                </p>
-              </section>
-
-              <section aria-labelledby="mcp-coverage" className="space-y-3">
-                <h3 id="mcp-coverage" className="text-xl font-semibold">Что доступно</h3>
-                <dl className="divide-y divide-edge border-y border-edge">
-                  {COVERAGE.map(({ section, status, tone, description }) => (
-                    <div key={section} className="space-y-1 py-3">
-                      <dt className="flex flex-wrap items-baseline justify-between gap-x-2">
-                        <span className="font-medium">{section}</span>
-                        <span className={`text-xs ${tone}`}>{status}</span>
-                      </dt>
-                      <dd className="text-sm leading-relaxed text-dim">{description}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
-            </div>
-
-            <section aria-labelledby="mcp-tools" className="min-w-0 rounded-xl border border-edge bg-surface">
-              <div className="space-y-3 border-b border-edge p-4 sm:p-5">
-                <div className="flex items-baseline justify-between gap-2">
-                  <h3 id="mcp-tools" className="text-xl font-semibold">Инструменты</h3>
-                  {tools && <p role="status" className="font-mono text-xs text-dim">{tools.length} из {catalog.data?.length}</p>}
-                </div>
-                <input
-                  aria-label="Поиск инструментов"
-                  type="search"
-                  className="input"
-                  placeholder="Поиск по имени или описанию"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
+      <main className="mcp-page">
+        <div className="mcp-workspace">
+          <div className="mcp-intro">
+            <div>
+              <div className="mcp-protocol">
+                <span aria-hidden="true">⌘</span> Model Context Protocol
               </div>
-              {catalog.isPending && <p role="status" className="p-4 text-sm text-dim">Загружаем инструменты…</p>}
+              <h2>TaskTracker для ваших агентов</h2>
+              <p>
+                Задачи, проекты, траты и бюджет. Весь рабочий контекст через
+                один MCP-сервер.
+              </p>
+            </div>
+            <div className="mcp-transport">
+              <code>/mcp</code>
+              <span>Streamable HTTP</span>
+              <span>Bearer-токен</span>
+            </div>
+          </div>
+
+          <div className="mcp-section-tabs" aria-label="Информация MCP">
+            <button
+              type="button"
+              aria-pressed={section === "catalog"}
+              onClick={() => setSection("catalog")}
+            >
+              Каталог инструментов{" "}
+              {catalog.data && <span>{catalog.data.length}</span>}
+            </button>
+            <button
+              type="button"
+              aria-pressed={section === "connection"}
+              onClick={() => setSection("connection")}
+            >
+              Подключение
+            </button>
+          </div>
+
+          {section === "connection" ? (
+            <ConnectionPanel />
+          ) : (
+            <>
+              {catalog.isPending && (
+                <p role="status" className="mcp-message">
+                  Загружаем инструменты…
+                </p>
+              )}
               {catalog.isError && (
-                <div role="alert" className="p-4 text-sm text-dim">
+                <div role="alert" className="mcp-message">
                   Не удалось загрузить инструменты.
-                  <button type="button" className="btn-ghost ml-1" onClick={() => void catalog.refetch()}>Повторить</button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => void catalog.refetch()}
+                  >
+                    Повторить
+                  </button>
                 </div>
               )}
-              {tools?.length === 0 && <p className="p-4 text-sm text-dim">Инструменты не найдены.</p>}
-              {tools?.map((tool) => <ToolDetails key={tool.name} tool={tool} />)}
-            </section>
-          </div>
+              {catalog.data && (
+                <div className="mcp-catalog">
+                  <aside
+                    className="mcp-tool-browser"
+                    aria-label="Каталог инструментов"
+                  >
+                    <label className="mcp-search">
+                      <svg
+                        viewBox="0 0 20 20"
+                        width="17"
+                        height="17"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        aria-hidden="true"
+                      >
+                        <circle cx="8" cy="8" r="5" />
+                        <path d="m12 12 5 5" />
+                      </svg>
+                      <input
+                        type="search"
+                        aria-label="Поиск инструментов"
+                        placeholder="Найти инструмент…"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                      />
+                    </label>
+                    <div
+                      className="mcp-groups"
+                      aria-label="Разделы инструментов"
+                    >
+                      {MCP_GROUPS.map((label) => {
+                        const count =
+                          label === "Все инструменты"
+                            ? allTools.length
+                            : allTools.filter(
+                                (tool) => toolInfo(tool).group === label,
+                              ).length;
+                        if (!count && label !== "Все инструменты") return null;
+                        return (
+                          <button
+                            key={label}
+                            type="button"
+                            aria-pressed={group === label}
+                            onClick={() => setGroup(label)}
+                          >
+                            {label}
+                            <span>{count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mcp-results-heading">
+                      <span>Инструменты</span>
+                      <span role="status">
+                        {tools.length} из {allTools.length}
+                      </span>
+                    </div>
+                    <div className="mcp-tool-list">
+                      {tools.map((tool) => {
+                        const info = toolInfo(tool);
+                        return (
+                          <button
+                            key={tool.name}
+                            type="button"
+                            aria-pressed={selected?.name === tool.name}
+                            onClick={() => setSelectedName(tool.name)}
+                          >
+                            <span className="mcp-tool-list-title">
+                              {info.title}
+                            </span>
+                            <code>{tool.name}</code>
+                            <span
+                              className="mcp-tool-list-arrow"
+                              aria-hidden="true"
+                            >
+                              ›
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {tools.length === 0 && (
+                        <p className="mcp-message">Инструменты не найдены.</p>
+                      )}
+                    </div>
+                  </aside>
+                  {selected && (
+                    <ToolPanel key={selected.name} tool={selected} />
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </main>
     </div>

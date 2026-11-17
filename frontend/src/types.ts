@@ -224,8 +224,19 @@ export interface MonthlyBudget {
 export interface McpTool {
   name: string;
   description?: string;
-  inputSchema: {
-    properties?: Record<string, { description?: string; [keyword: string]: unknown }>;
-    required?: string[];
-  };
+  inputSchema: JsonSchema;
+}
+
+export interface JsonSchema {
+  type?: string;
+  description?: string;
+  enum?: (string | number)[];
+  default?: unknown;
+  anyOf?: JsonSchema[];
+  items?: JsonSchema;
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  $ref?: string;
+  $defs?: Record<string, JsonSchema>;
+  [keyword: string]: unknown;
 }

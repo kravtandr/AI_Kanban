@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import (
     EstimateBucket,
@@ -415,3 +415,20 @@ class ExpenseDraftOut(BaseModel):
     amount: int  # копейки, round(amount_rub * 100); 0 при null
     ai_ok: bool
     ai_error: str | None = None
+
+
+MAX_AMOUNT = 10_000_000_000  # 100 млн рублей в копейках
+
+
+class FreelanceReceipt(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(default="", max_length=200)
+    amount: int = Field(strict=True, gt=0, le=MAX_AMOUNT)
+
+
+class BudgetIn(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    salary: int = Field(strict=True, ge=0, le=MAX_AMOUNT)
+    freelance: list[FreelanceReceipt] = Field(max_length=100)
